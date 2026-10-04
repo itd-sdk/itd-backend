@@ -257,6 +257,33 @@ if (!args.offline && !args['keep-cdn']) {
   }
 }
 
+// UI icons are fetched at runtime from `${CDN}/public/assets/icons/<name>.svg` (the URL is built in code, so the
+// mirror above does not see it); names come from calls like `X(Icon,{name:a?"liked":"like"})`
+const ICONS = '/public/assets/icons'
+const icons = { mirrored: 0, names: [] as string[] }
+if (!args.offline && !args['keep-cdn'] && [...bundle.values()].some((code) => code.includes(`${CDN}${ICONS}`))) {
+  const names = new Set(['like', 'liked', 'comment', 'share'])
+  for (const code of bundle.values()) {
+    for (const m of code.matchAll(/[(,][\w$]+,\{name:((?:[\w$.!]+\?)?"[a-z0-9_-]+"(?::"[a-z0-9_-]+")?)/g)) {
+      for (const lit of m[1]!.matchAll(/"([a-z0-9_-]+)"/g)) names.add(lit[1]!)
+    }
+  }
+  for (const name of names) {
+    const path = `${ICONS}/${name}.svg`
+    try {
+      const target = join(OUT, 'cdn', path)
+      const body = (await previous(`cdn${path}`)) ?? (await download(`${CDN}${path}`))
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, body)
+      icons.mirrored++
+      icons.names.push(name)
+    } catch (error) {
+      // most candidates that are not icons simply do not exist
+      if (!(error instanceof NotFoundError)) missing.cdn.push(path)
+    }
+  }
+  if (!icons.names.includes('like')) warn('UI icons (like/comment/share) could not be mirrored, run the build again')
+}
 if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirrored: ${missing.cdn.slice(0, 5).join(', ')}${missing.cdn.length > 5 ? ', …' : ''}`)
 
 // ---------------------------------------------------------------- 5. patches
@@ -351,6 +378,7 @@ const info = {
   cdnMirrored: mirrored,
   removedScripts: removed,
   missing,
+  icons: icons.names,
   warnings
 }
 await writeFile(join(OUT, 'build-info.json'), JSON.stringify(info, null, 2))
@@ -361,7 +389,7 @@ for (const entry of await readdir(OUT)) await rename(join(OUT, entry), join(TARG
 await rm(OUT, { recursive: true, force: true })
 
 console.log(`\nbuilt ${TARGET}`)
-console.log(`  entry ${entry}, ${bundle.size} js/css files, ${staticRefs.size - missingStatic}/${staticRefs.size} static files, ${mirrored} cdn files`)
+console.log(`  entry ${entry}, ${bundle.size} js/css files, ${staticRefs.size - missingStatic}/${staticRefs.size} static files, ${mirrored} cdn files, ${icons.mirrored} icons`)
 console.log(`  patched: sentry ${stats.sentry}, cdn urls ${stats.cdn}, telegram ${Object.values(stats.telegram).reduce((a, b) => a + b, 0)} (bot @${BOT})`)
 if (removed.length) console.log(`  removed scripts: ${removed.join(', ')}`)
 if (warnings.length) console.log(`  ${warnings.length} warning(s), see build-info.json`)
