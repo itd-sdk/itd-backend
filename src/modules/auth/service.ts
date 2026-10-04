@@ -118,18 +118,21 @@ export async function refreshSession(refreshToken: string | undefined, ctx: Clie
 
   let nextToken: string | null = null
   if (rotate) {
-    nextToken = randomToken(48)
-    await db
+    // grace first, then a compare-and-swap: of two concurrent refreshes only one rotates, the other keeps its cookie
+    await redis.set(rk('sess', 'grace', hash), session.id, 'EX', REFRESH_GRACE_SECONDS)
+    const candidate = randomToken(48)
+    const rotated = await db
       .update(sessions)
       .set({
-        tokenHash: sha256(nextToken),
+        tokenHash: sha256(candidate),
         lastUsedAt: new Date(),
         expiresAt: addDays(new Date(), config.auth.refreshTokenTtlDays),
         ipAddress: ctx.ip,
         ipCountry: ctx.country ?? session.ipCountry
       })
-      .where(eq(sessions.id, session.id))
-    await redis.set(rk('sess', 'grace', hash), session.id, 'EX', REFRESH_GRACE_SECONDS)
+      .where(and(eq(sessions.id, session.id), eq(sessions.tokenHash, hash)))
+      .returning({ id: sessions.id })
+    if (rotated.length) nextToken = candidate
   }
   const { token: accessToken } = signAccessToken({ userId: account.id, sessionId: session.id, roles: account.roles })
   return { accessToken, refreshToken: nextToken, session, account }

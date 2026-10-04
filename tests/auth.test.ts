@@ -90,6 +90,17 @@ describe('sign-in & tokens', () => {
     expect((await api('POST', '/v1/auth/refresh')).body.error.code).toBe('REFRESH_TOKEN_MISSING')
   })
 
+  test('parallel refreshes with one token rotate it once', async () => {
+    const user = await createUser()
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => api('POST', '/v1/auth/refresh', { cookie: `refresh_token=${user.refresh}` }))
+    )
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200])
+    const issued = results.map((r) => r.cookies.refresh_token).filter(Boolean)
+    expect(issued).toHaveLength(1)
+    expect((await api('POST', '/v1/auth/refresh', { cookie: `refresh_token=${issued[0]}` })).status).toBe(200)
+  })
+
   test('logout revokes the session and its access tokens', async () => {
     const user = await createUser()
     expect((await api('GET', '/users/me', { token: user.token })).status).toBe(200)
