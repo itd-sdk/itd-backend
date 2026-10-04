@@ -7,7 +7,8 @@ import { closeDb, db } from './client'
 import { accounts, announcements, appVersions, changelog, notificationSettings, pins, userPins, users } from './schema'
 
 const PINS = [
-  { slug: 'nuksta', name: 'НУКСТА', description: 'Подписчик НУКСТА' },
+  // the client draws a pin only from `url`; this GIF is mirrored with the web client (deploy/frontend)
+  { slug: 'nuksta', name: 'НУКСТА', description: 'Подписчик НУКСТА', url: '/cdn/public/pins/nuksta.gif' },
   { slug: 'early', name: 'Первопроходец', description: 'Один из первых пользователей ИТД' },
   { slug: 'verified', name: 'Проверенный', description: 'Прошёл верификацию' },
   { slug: 'moderator', name: 'Модератор', description: 'Следит за порядком' },
@@ -26,7 +27,13 @@ const CHANGELOG = [
 ]
 
 export async function seedReferenceData() {
-  for (const pin of PINS) await db.insert(pins).values(pin).onConflictDoNothing()
+  for (const pin of PINS) {
+    // a picture set by an admin is kept
+    await db
+      .insert(pins)
+      .values(pin)
+      .onConflictDoUpdate({ target: pins.slug, set: { url: sql`coalesce(${pins.url}, excluded.url)` } })
+  }
   for (const app of APPS) await db.insert(appVersions).values(app).onConflictDoNothing()
   for (const [index, entry] of CHANGELOG.entries()) {
     await db

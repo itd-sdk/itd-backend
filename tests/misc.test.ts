@@ -235,6 +235,20 @@ describe('account purge', () => {
   })
 })
 
+describe('pins', () => {
+  test('admin creates a pin with a picture and grants it; the default НУКСТА pin has one', async () => {
+    const admin = await makeAdmin(await createUser())
+    const user = await createUser()
+    const pin = { slug: 'founder', name: 'Основатель', description: 'Запустил сервер', url: '/uploads/founder.png' }
+    expect((await api('POST', '/admin/pins', { token: admin, body: pin })).body.success).toBe(true)
+    expect((await api('POST', `/admin/users/${user.username}/pins`, { token: admin, body: { slug: 'founder' } })).body.success).toBe(true)
+    expect((await api('PUT', '/users/me/pin', { token: user.token, body: { slug: 'founder' } })).body.success).toBe(true)
+    expect((await api('GET', `/users/${user.username}`)).body.pin).toMatchObject({ slug: 'founder', url: '/uploads/founder.png' })
+    const all = (await api('GET', '/admin/pins', { token: admin })).body.pins
+    expect(all.find((p: any) => p.slug === 'nuksta').url).toBe('/cdn/public/pins/nuksta.gif')
+  })
+})
+
 describe('event', () => {
   test('wallet, shop, stickers and nicknames', async () => {
     const owner = await createUser()

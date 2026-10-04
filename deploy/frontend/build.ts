@@ -6,13 +6,14 @@
  *   bun deploy/frontend/build.ts --source ../itd-frontend --offline  # no network: synthesized index.html, no images/sounds
  *
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
- * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn.
+ * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn,
+ * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon.
  *
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { applyPatches, missingPatches, openitdPatches } from './patches'
 
@@ -23,6 +24,8 @@ const { values: args } = parseArgs({
     origin: { type: 'string', default: 'https://xn--d1ah4a.com' },
     'cdn-origin': { type: 'string', default: 'https://cdn.xn--d1ah4a.com' },
     'telegram-bot': { type: 'string', default: process.env.TELEGRAM_BOT ?? 'openitd_bot' },
+    title: { type: 'string', default: process.env.SITE_TITLE ?? '' },
+    icon: { type: 'string', default: process.env.SITE_ICON ?? '' },
     offline: { type: 'boolean', default: false },
     'keep-cdn': { type: 'boolean', default: false }
   }
@@ -268,7 +271,9 @@ if (args.offline) {
   for (const name of rootRefs) {
     try {
       await mkdir(dirname(join(OUT, name)), { recursive: true })
-      await writeFile(join(OUT, name), (await previous(name)) ?? (await download(`${ORIGIN}/${name}`)))
+      // names without a hash can change on the site: download first, the previous build is only a fallback
+      const body = await download(`${ORIGIN}/${name}`).catch(async (error) => (await previous(name)) ?? Promise.reject(error))
+      await writeFile(join(OUT, name), body)
     } catch {
       warn(`could not download /${name}`)
     }
@@ -487,6 +492,45 @@ if (html && liveEntry && liveEntry !== sourceEntry) page = page.replace(`/assets
 page = renameRefs(page)
 
 page = stripTrackers(page)
+// ---- branding: title and icon
+const escapeAttr = (value: string) => value.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+const TITLE_META = /\b(?:property|name)="(?:og:title|og:site_name|twitter:title|apple-mobile-web-app-title|application-name)"/i
+const title = args.title!.trim()
+if (title) {
+  page = /<title>[\s\S]*?<\/title>/i.test(page)
+    ? page.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeAttr(title)}</title>`)
+    : page.replace(/<\/head>/i, `  <title>${escapeAttr(title)}</title>\n  </head>`)
+  page = page.replace(/<meta\b[^>]*>/gi, (tag) => (TITLE_META.test(tag) ? tag.replace(/content="[^"]*"/i, `content="${escapeAttr(title)}"`) : tag))
+}
+const ICON_TYPES: Record<string, string> = { '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp' }
+let iconPath: string | null = null
+if (args.icon) {
+  const ext = extname(args.icon).toLowerCase()
+  const type = ICON_TYPES[ext]
+  if (!type) throw new Error(`--icon must be a .png, .svg, .ico or .webp file: ${args.icon}`)
+  const icon = await readFile(resolve(args.icon))
+  // a name that changes with the picture, so browsers do not keep showing the old one
+  iconPath = `/icon-${createHash('sha256').update(icon).digest('hex').slice(0, 8)}${ext}`
+  await writeFile(join(OUT, iconPath), icon)
+  if (ext === '.ico') await writeFile(join(OUT, 'favicon.ico'), icon)
+  else await rm(join(OUT, 'favicon.ico'), { force: true })
+  page = page.replace(/<link\b[^>]*\brel="(?:shortcut icon|icon|apple-touch-icon(?:-precomposed)?|mask-icon)"[^>]*>\s*/gi, '')
+  page = page.replace(/<\/head>/i, `  <link rel="icon" type="${type}" href="${iconPath}">\n  <link rel="apple-touch-icon" href="${iconPath}">\n  </head>`)
+}
+// installed-app name and icon
+if (title || iconPath) {
+  for (const file of await readdir(OUT)) {
+    if (!/\.webmanifest$|^manifest\.json$/.test(file)) continue
+    try {
+      const manifest = JSON.parse(await readFile(join(OUT, file), 'utf8'))
+      if (title) Object.assign(manifest, { name: title, short_name: title })
+      if (iconPath) manifest.icons = [{ src: iconPath, sizes: 'any', type: ICON_TYPES[extname(iconPath)] }]
+      await writeFile(join(OUT, file), JSON.stringify(manifest, null, 2))
+    } catch {
+      warn(`could not update ${file}`)
+    }
+  }
+}
 page = page.replace(/<\/head>/i, `  ${CAPTCHA_STUB}\n  </head>`)
 await writeFile(join(OUT, 'index.html'), page)
 
@@ -498,6 +542,8 @@ const info = {
   source: args.source ? resolve(args.source) : ORIGIN,
   offline: args.offline,
   telegramBot: BOT,
+  title: title || null,
+  icon: iconPath,
   patches: stats,
   cdnMirrored: mirrored,
   removedScripts: removed,

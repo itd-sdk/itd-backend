@@ -207,6 +207,30 @@ sudo certbot --nginx -d ВАШ.ДОМЕН             # сертификат, HT
 в `sites-enabled/`) или `/etc/nginx/conf.d/*.conf`, логи — `/var/log/nginx/`. Сайт nginx читает от
 пользователя `www-data`, поэтому собранный веб-клиент кладите в `/var/www/itd`, а не в домашнюю папку.
 
+## Название, иконка и пины
+
+**Название и иконка сайта** задаются при сборке веб-клиента (шаг 6):
+
+```bash
+bun deploy/frontend/build.ts --source ../itd-frontend --telegram-bot openitd_bot \
+    --title "OpenITD" --icon ~/openitd-icon.png
+```
+
+Или один раз в `.env` (сборка читает его сама): `SITE_TITLE=OpenITD`, `SITE_ICON=/home/desi/openitd-icon.png`.
+Иконка — `.png` (лучше квадратная, 512×512), `.svg`, `.ico` или `.webp`; меняются заголовок вкладки,
+иконка вкладки и на экране «Домой», название в манифесте. Логотип внутри интерфейса — часть бандла, он не меняется.
+
+**Пины** — значки возле имени. Веб-клиент рисует пин только по картинке (`url`), без неё пин не виден.
+Всё делается из Swagger (`/swagger`, «Authorize» с токеном администратора, см. «Админка»):
+
+1. Картинка: `POST /api/files/upload` (multipart, поле `file`) → в ответе `url` вида `/uploads/...`
+   (или положите файл в любую папку, которую отдаёт nginx).
+2. Пин: `POST /api/admin/pins` → `{"slug": "founder", "name": "Основатель", "description": "...", "url": "/uploads/..."}`;
+   тот же запрос с существующим `slug` меняет пин. Список: `GET /api/admin/pins`.
+3. Выдать: `POST /api/admin/users/<id или username>/pins` → `{"slug": "founder"}`; забрать:
+   `DELETE /api/admin/users/<id или username>/pins/founder`.
+4. Пользователь выбирает активный пин в настройках профиля.
+
 ## Ивент
 
 1. В `.env` backend: `EVENT_ENABLED=true` (по желанию `EVENT_ENDS_AT=2026-12-31T21:00:00Z`, иначе ивент идёт
