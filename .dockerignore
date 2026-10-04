@@ -1,0 +1,7 @@
+node_modules
+uploads
+.test-uploads
+.env
+.git
+tests
+.scratch
