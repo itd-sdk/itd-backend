@@ -95,11 +95,12 @@ export function applyPatches(code: string, patches: Patch[], counts: PatchCounts
   let result = code
   for (const patch of patches) {
     counts[patch.name] ??= 0
-    result = result.replace(patch.find, (...m: string[]) => {
+    // fresh RegExp objects: global regexes keep lastIndex between calls
+    result = result.replace(new RegExp(patch.find.source, patch.find.flags), (...m: string[]) => {
       counts[patch.name]!++
       return patch.replace(...m)
     })
-    if (counts[patch.name] === 0 && patch.done.test(result)) counts[patch.name] = 1
+    if (counts[patch.name] === 0 && new RegExp(patch.done.source, patch.done.flags).test(result)) counts[patch.name] = 1
   }
   return result
 }

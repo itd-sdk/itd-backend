@@ -254,7 +254,17 @@ for (const [file, original] of bundle) {
 }
 if (!stats.sentry) warn('Sentry DSN was not found in the bundle (nothing patched) — check the bundle manually')
 const unmatched = missingPatches(PATCHES, stats.telegram)
-if (unmatched.length) throw new Error(`the bundle changed, these patches did not apply: ${unmatched.join('; ')}`)
+if (unmatched.length) {
+  // markers of the screens the patches target, to tell a different bundle from a broken copy
+  const probes = ['ilya@gmail.com', 'Создание аккаунта', 'Введите email', 'Код с почты']
+  const jsFiles = [...bundle.keys()].filter((f) => f.endsWith('.js'))
+  for (const probe of probes) {
+    const found = jsFiles.filter((f) => bundle.get(f)!.includes(probe))
+    console.error(`  "${probe}": ${found.length ? found.join(', ') : 'not found'}`)
+  }
+  console.error(`  ${jsFiles.length} js files checked, bun ${Bun.version}`)
+  throw new Error(`the bundle changed, these patches did not apply: ${unmatched.join('; ')}`)
+}
 
 // ---------------------------------------------------------------- 6. index.html
 
