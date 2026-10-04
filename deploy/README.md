@@ -19,7 +19,7 @@ Telegram и пароль → backend кладёт код в Redis → бот п�
 |---|---|---|
 | домен сайта | `/etc/caddy/Caddyfile` (первая строка), `PUBLIC_URL` в `/opt/itd-backend/.env`, `SITE_URL` в `deploy/telegram-bot/.env` | `itd.example.com` |
 | адрес и порт backend | `HOST` и `PORT` в `.env` **и** оба `reverse_proxy 127.0.0.1:3000` в Caddyfile — должны совпадать | `127.0.0.1:3000` |
-| порты сайта | Caddy: 80 (редирект на HTTPS) и 443 | — |
+| порты сайта | Caddy (или nginx, см. ниже): 80 (редирект на HTTPS) и 443 | — |
 | PostgreSQL | `DATABASE_URL` в `.env` | `postgres://itd:ПАРОЛЬ@localhost:5432/itd` |
 | Redis | `REDIS_URL` и `REDIS_PREFIX` в `.env` **и** в `deploy/telegram-bot/.env` — одинаковые | `redis://localhost:6379`, `itd:` |
 | токен бота | `BOT_TOKEN` в `deploy/telegram-bot/.env` | — |
@@ -185,6 +185,24 @@ sudo systemctl reload caddy
 | «Откройте Telegram-бота…» после «Старт» | разные `REDIS_URL`/`REDIS_PREFIX` у backend и бота, или бот не запущен |
 | код не приходит | `journalctl -u itd-bot` — неверный `BOT_TOKEN` или пользователь заблокировал бота |
 | после входа сразу выкидывает | `COOKIE_SECURE=true` при открытии сайта по http, или `PUBLIC_URL` не совпадает с доменом |
+
+## nginx вместо Caddy
+
+Caddy и nginx делают одно и то же (HTTPS, раздача сайта, прокси на backend) — нужен **один** из них,
+оба занимают порты 80/443. Если nginx уже стоит на сервере, используйте его:
+
+```bash
+sudo apt install -y nginx certbot python3-certbot-nginx
+sudo cp deploy/nginx/itd.conf /etc/nginx/sites-available/itd
+sudo nano /etc/nginx/sites-available/itd        # server_name и root (папка с собранным сайтом)
+sudo ln -s /etc/nginx/sites-available/itd /etc/nginx/sites-enabled/itd
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d ВАШ.ДОМЕН             # сертификат, HTTPS и редирект с http
+```
+
+Конфиги nginx: `/etc/nginx/nginx.conf` (общий), сайты — `/etc/nginx/sites-available/` (включаются ссылкой
+в `sites-enabled/`) или `/etc/nginx/conf.d/*.conf`, логи — `/var/log/nginx/`. Сайт nginx читает от
+пользователя `www-data`, поэтому собранный веб-клиент кладите в `/var/www/itd`, а не в домашнюю папку.
 
 ## Обновление
 
