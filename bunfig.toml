@@ -1,3 +1,7 @@
 [test]
 preload = ["./tests/setup.ts"]
 timeout = 30000
+
+[install]
+# never fall back to the global package cache: missing node_modules must fail loudly (run `bun install`)
+auto = "disable"
