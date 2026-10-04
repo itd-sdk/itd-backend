@@ -8,12 +8,12 @@
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
  * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn.
  *
- * openitd patches: sign-up / sign-in / password recovery ask for a Telegram username instead of an email,
- * the code comes from the Telegram bot, and the captcha step is skipped.
+ * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { applyPatches, missingPatches, openitdPatches } from './patches'
 
 const { values: args } = parseArgs({
   options: {
@@ -232,60 +232,9 @@ if (!args.offline && !args['keep-cdn']) {
 // ---------------------------------------------------------------- 5. patches
 
 const BOT = args['telegram-bot']!.trim().replace(/^@/, '')
-const botLink = (h: string) => `${h}("a",{href:"https://t.me/${BOT}",target:"_blank",rel:"noopener noreferrer",children:"@${BOT}"})`
-
-type Patch = { name: string; find: RegExp; replace: string | ((...m: string[]) => string) }
-// every patch has to match at least once, otherwise the bundle changed and the build stops
-const PATCHES: Patch[] = [
-  {
-    name: 'login field: Telegram instead of E-Mail',
-    find: /children:"E-Mail"\}\),(\w+)\("input",\{type:"email"/g,
-    replace: (_, h) => `children:"Telegram"}),${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false`
-  },
-  { name: 'login placeholder', find: /placeholder:"ilya@gmail\.com"/g, replace: 'placeholder:"@username"' },
-  { name: 'empty login message', find: /"Введите email"/g, replace: '"Введите ник в Telegram"' },
-  { name: 'taken login message', find: /"Этот email уже зарегистрирован"/g, replace: '"Этот Telegram уже зарегистрирован"' },
-  { name: 'invalid credentials message', find: /"Неверный email или пароль"/g, replace: '"Неверный ник Telegram или пароль"' },
-  { name: 'unknown account message', find: /"Аккаунт с таким email не найден"/g, replace: '"Аккаунт с таким Telegram не найден"' },
-  { name: 'invalid login message', find: /"Введите корректный email"/g, replace: '"Введите корректный ник Telegram"' },
-  { name: 'code input label', find: /"Код с почты"/g, replace: '"Код из Telegram"' },
-  {
-    name: 'sign-up: open the bot first',
-    find: /(\w+)\("h1",\{className:(\w+)\.title,children:"Создание аккаунта"\}\),\1\("p",\{className:\2\.subtitle,children:"Пожалуйста, введите ваши данные"\}\)/g,
-    replace: (_, h, c) =>
-      `${h}("h1",{className:${c}.title,children:"Создание аккаунта"}),${h}("p",{className:${c}.subtitle,children:["Сначала откройте Telegram-бота ",${botLink(h)}," и нажмите «Старт» — туда придёт код подтверждения. Затем укажите ваш ник в Telegram и придумайте пароль."]})`
-  },
-  {
-    name: 'sign-in: the code comes from the bot',
-    find: /(\w+)\("h1",\{className:(\w+)\.title,children:"Вход"\}\),\1\("p",\{className:\2\.subtitle,children:"Пожалуйста, введите ваши данные"\}\)/g,
-    replace: (_, h, c) =>
-      `${h}("h1",{className:${c}.title,children:"Вход"}),${h}("p",{className:${c}.subtitle,children:["Введите ник в Telegram и пароль. Код для входа пришлёт бот ",${botLink(h)},"."]})`
-  },
-  {
-    name: 'password recovery subtitle',
-    find: /"Введите ваш E-Mail для восстановления"/g,
-    replace: `"Введите ваш ник в Telegram — код придёт в бот @${BOT}"`
-  },
-  {
-    name: 'code screen: sent to the bot',
-    find: /children:\["Мы отправили шестизначный код на почту ",(\w+),", чтобы убедиться, что вы – настоящий её владелец\."\]/g,
-    replace: (_, v) => `children:["Мы отправили шестизначный код в Telegram-бот @${BOT} для ",${v},"."]`
-  },
-  {
-    name: 'recovery code screen: sent to the bot',
-    find: /children:\["Мы отправили шестизначный код на ",(\w+)\]/g,
-    replace: (_, v) => `children:["Мы отправили шестизначный код в Telegram-бот @${BOT} для ",${v}]`
-  },
-  {
-    // the form opens the captcha modal and submits from its callback: submit right away instead
-    name: 'skip the captcha step',
-    find: /return\}(\w+)\(!0\)\},(\w+)=(\w+)\(async (\w+)=>\{\1\(!1\)/g,
-    replace: (_, open, submit, hook, arg) => `return}${submit}(void 0)},${submit}=${hook}(async ${arg}=>{${open}(!1)`
-  }
-]
+const PATCHES = openitdPatches(BOT)
 
 const stats = { sentry: 0, cdn: 0, telegram: {} as Record<string, number> }
-for (const patch of PATCHES) stats.telegram[patch.name] = 0
 for (const [file, original] of bundle) {
   if (!file.endsWith('.js')) continue
   let code = original
@@ -294,12 +243,7 @@ for (const [file, original] of bundle) {
     stats.sentry++
     return 'dsn:""'
   })
-  for (const patch of PATCHES) {
-    code = code.replace(patch.find, (...m: string[]) => {
-      stats.telegram[patch.name]!++
-      return typeof patch.replace === 'string' ? patch.replace : patch.replace(...m)
-    })
-  }
+  code = applyPatches(code, PATCHES, stats.telegram)
   if (!args['keep-cdn']) {
     code = code.replaceAll(CDN, () => {
       stats.cdn++
@@ -309,8 +253,8 @@ for (const [file, original] of bundle) {
   if (code !== original) await writeFile(join(ASSETS, file), code)
 }
 if (!stats.sentry) warn('Sentry DSN was not found in the bundle (nothing patched) — check the bundle manually')
-const unmatched = PATCHES.filter((p) => !stats.telegram[p.name])
-if (unmatched.length) throw new Error(`the bundle changed, these patches did not apply: ${unmatched.map((p) => p.name).join('; ')}`)
+const unmatched = missingPatches(PATCHES, stats.telegram)
+if (unmatched.length) throw new Error(`the bundle changed, these patches did not apply: ${unmatched.join('; ')}`)
 
 // ---------------------------------------------------------------- 6. index.html
 
