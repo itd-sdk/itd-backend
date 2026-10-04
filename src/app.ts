@@ -15,7 +15,6 @@ import { platformModule } from './modules/platform'
 import { postsModule } from './modules/posts'
 import { reportsModule } from './modules/reports'
 import { searchModule } from './modules/search'
-import { subscriptionModule } from './modules/subscription'
 import { usersModule } from './modules/users'
 import { verificationModule } from './modules/verification'
 import { uploadsModule } from './modules/uploads'
@@ -34,7 +33,6 @@ const TAGS = [
   { name: 'Files', description: 'Media uploads' },
   { name: 'Reports', description: 'Content reports' },
   { name: 'Platform', description: 'App versions, changelog, announcements' },
-  { name: 'Subscription', description: 'НУКСТА subscription and payment methods' },
   { name: 'Verification', description: 'Account verification requests' },
   { name: 'Dwell', description: 'View and interaction analytics' },
   { name: 'Event', description: 'Seasonal event (portal, aliceai)' },
@@ -53,7 +51,6 @@ export function createApp() {
     .use(notificationsModule)
     .use(reportsModule)
     .use(platformModule)
-    .use(subscriptionModule)
     .use(verificationModule)
     .use(dwellModule)
     .use(eventModule)

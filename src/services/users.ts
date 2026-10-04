@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { validate as isUuid } from 'uuid'
 import { db, type Executor } from '../db/client'
-import { type AccessType, blocks, eventNicknames, eventWallets, files, followRequests, follows, pins, subscriptions, userPins, users } from '../db/schema'
+import { type AccessType, blocks, eventNicknames, eventWallets, files, followRequests, follows, pins, userPins, users } from '../db/schema'
 import { ApiError, notFound, uriTooLong } from '../lib/errors'
 import { iso, lastSeenFrom } from '../lib/time'
 import type { Me } from '../plugins/auth'
@@ -18,14 +18,11 @@ export type UserRecord = Me & {
   avatarUrl: string | null
   bannerUrl: string | null
   pin: PinView | null
-  subscriptionExpiresAt: Date | null
-  subscriptionAutoRenewal: boolean
   nickname: NicknameView | null
 }
 
-export const isSubscriptionActive = (expiresAt: Date | null | undefined) => !!expiresAt && expiresAt.getTime() > Date.now()
 
-/** Loads users with everything needed to render them (pin, picture avatar, banner, subscription, nickname) */
+/** Loads users with everything needed to render them (pin, picture avatar, banner, nickname) */
 export async function loadUserRecords(ids: string[], executor: Executor = db): Promise<Map<string, UserRecord>> {
   const unique = [...new Set(ids.filter(Boolean))]
   const result = new Map<string, UserRecord>()
@@ -41,8 +38,6 @@ export async function loadUserRecords(ids: string[], executor: Executor = db): P
       pinDescription: pins.description,
       pinUrl: pins.url,
       pinGrantedAt: userPins.grantedAt,
-      subscriptionExpiresAt: subscriptions.expiresAt,
-      subscriptionAutoRenewal: subscriptions.autoRenewal,
       nicknameId: eventNicknames.id,
       nicknameLabel: eventNicknames.label,
       nicknameStyle: eventNicknames.styleKey,
@@ -54,7 +49,6 @@ export async function loadUserRecords(ids: string[], executor: Executor = db): P
     .leftJoin(bannerFile, and(eq(bannerFile.id, users.bannerFileId), isNull(bannerFile.deletedAt)))
     .leftJoin(pins, eq(pins.slug, users.activePinSlug))
     .leftJoin(userPins, and(eq(userPins.userId, users.id), eq(userPins.pinSlug, users.activePinSlug)))
-    .leftJoin(subscriptions, eq(subscriptions.userId, users.id))
     .leftJoin(eventWallets, eq(eventWallets.userId, users.id))
     .leftJoin(eventNicknames, and(eq(eventNicknames.id, eventWallets.activeNicknameId), gt(eventNicknames.expiresAt, sql`now()`)))
     .where(inArray(users.id, unique))
@@ -67,8 +61,6 @@ export async function loadUserRecords(ids: string[], executor: Executor = db): P
       pin: row.pinSlug
         ? { slug: row.pinSlug, name: row.pinName!, description: row.pinDescription ?? '', url: row.pinUrl, grantedAt: iso(row.pinGrantedAt) }
         : null,
-      subscriptionExpiresAt: row.subscriptionExpiresAt,
-      subscriptionAutoRenewal: row.subscriptionAutoRenewal ?? true,
       nickname: row.nicknameId
         ? {
             id: row.nicknameId,
@@ -199,7 +191,6 @@ export function presentBrief(user: UserRecord) {
     avatar: user.avatarUrl ?? user.avatar,
     clanAvatar: user.avatar,
     verified: user.verified,
-    hasNuksta: isSubscriptionActive(user.subscriptionExpiresAt),
     pin: user.pin,
     activeNickname: user.nickname
   }
@@ -279,11 +270,9 @@ export function presentMe(user: UserRecord, account: { telegram: string; roles: 
     isPrivate: user.isPrivate,
     showLastSeen: user.showLastSeen,
     isPhoneVerified: user.phoneVerified,
-    subscription: {
-      isActive: isSubscriptionActive(user.subscriptionExpiresAt),
-      expiresAt: iso(user.subscriptionExpiresAt),
-      autoRenewal: user.subscriptionAutoRenewal
-    },
+    // there is no subscription: everything is available to everyone. itd-sdk requires the object and the web client
+    // reads isActive to allow videos and picture avatars
+    subscription: { isActive: true, expiresAt: null, autoRenewal: false },
     followersCount: user.followersCount,
     followingCount: user.followingCount,
     postsCount: user.postsCount,

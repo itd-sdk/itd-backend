@@ -10,7 +10,6 @@ import { sniff } from '../../lib/media'
 import { storage } from '../../lib/storage'
 import { authPlugin, type Me } from '../../plugins/auth'
 import { FileModel, SuccessModel, Uuid } from '../../schemas'
-import { hasActiveSubscription } from '../../services/content'
 import { enforceActionLimit } from '../../services/rate-limit'
 
 type FileRow = typeof files.$inferSelect
@@ -102,7 +101,6 @@ export const filesModule = new Elysia({ tags: ['Files'] })
   .post(
     '/files/avatar',
     async ({ body, me, set }) => {
-      if (!(await hasActiveSubscription(me.id))) throw forbidden('Picture avatars are available with НУКСТА subscription', 'AVATAR_REQUIRES_NUKSTA')
       await enforceActionLimit('upload', me.id)
       const file = await storeUpload(me, body.file, 'avatar')
       await db.update(users).set({ avatarFileId: file.id, updatedAt: new Date() }).where(eq(users.id, me.id))
@@ -113,7 +111,7 @@ export const filesModule = new Elysia({ tags: ['Files'] })
       user: true,
       body: UploadBody,
       response: { 201: t.Object({ ...FileModel.properties, avatar: t.String() }) },
-      detail: { summary: 'Upload a picture avatar (НУКСТА)' }
+      detail: { summary: 'Upload a picture avatar' }
     }
   )
 
@@ -139,7 +137,7 @@ export const filesModule = new Elysia({ tags: ['Files'] })
     '/profile-avatar',
     async ({ me }) => {
       const [file] = me.avatarFileId ? await db.select({ url: files.url }).from(files).where(eq(files.id, me.avatarFileId)).limit(1) : []
-      return { data: { active: file?.url ?? null, available: await hasActiveSubscription(me.id) } }
+      return { data: { active: file?.url ?? null, available: true } }
     },
     { user: true, response: t.Object({ data: t.Object({ active: t.Nullable(t.String()), available: t.Boolean() }) }) }
   )

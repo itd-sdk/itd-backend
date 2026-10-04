@@ -102,26 +102,10 @@ check('update_stats', viewed.views_count == 1 and viewed.reposts_count == 1)
 check('liked posts list', isinstance(User(f'dave{RUN}', carol).liked_posts.load(5), list))
 check('hashtag search', isinstance(list(Hashtags.search('sdk')), list))
 
-# ---- subscription & pins
-sub = Me(carol).subscription
-check('subscription inactive', not sub.active)
-url = sub.pay()
-check('pay returns url', url.startswith('http'))
-confirm = url.split('?')
-rest('POST', confirm[0] + '/confirm?' + confirm[1], {}, headers={'accept': 'application/json'})
-me_c = Me(carol)
-check('subscription active after payment', me_c.subscription.active)
-check('auto renewal toggle', me_c.subscription.set_auto_renewal(False) is False)
-check('payment methods', len(me_c.subscription.payment_methods) == 1)
-check('nuksta pin granted', any(p.slug == 'nuksta' for p in me_c.pins))
-me_c.set_pin('nuksta')
-check('set pin', Me(carol).pin.slug == 'nuksta')
-expect('Subscription NotFound (dave)', E.NotFoundError, lambda: Me(dave).subscription.set_auto_renewal(True))
-
-# ---- video requires subscription
+# ---- media (no subscription: video posts are open to everyone)
 mp4 = bytes.fromhex('000000186674797069736f6d0000020069736f6d69736f32') + b'\x00' * 64
 vid = File('clip.mp4', mp4, client=dave)
-expect('RequiresSubscriptionError video', E.RequiresSubscriptionError, lambda: Post.new('видео', attachments=vid, client=dave))
+check('video post without subscription', Post.new('видео', attachments=vid, client=dave).id is not None)
 expect('InvalidFileTypeError', E.InvalidFileTypeError, lambda: File('note.txt', b'hello world, not media at all', client=dave))
 
 # ---- sessions & account deletion

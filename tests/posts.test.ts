@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/client'
-import { bannedWords, posts, subscriptions, users } from '../src/db/schema'
+import { bannedWords, posts, users } from '../src/db/schema'
 import { invalidateBannedWords } from '../src/services/moderation'
 import { api, createPost, createUser, PNG_1x1, resetState, type TestUser, uploadForm } from './helpers'
 
@@ -80,9 +80,10 @@ describe('create', () => {
     const mp4 = Buffer.concat([Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex'), Buffer.alloc(64)])
     const video = await api('POST', '/files/upload', { token: alice.token, form: uploadForm(mp4, 'clip.mp4') })
     expect(video.body.type).toBe('video')
-    expect((await api('POST', '/posts', { token: alice.token, body: { attachmentIds: [video.body.id] } })).body.error.code).toBe('VIDEO_REQUIRES_NUKSTA')
-    await db.insert(subscriptions).values({ userId: alice.id, expiresAt: new Date(Date.now() + 86400_000) })
+    // videos are open to everyone (no subscription)
     expect((await api('POST', '/posts', { token: alice.token, body: { attachmentIds: [video.body.id] } })).status).toBe(201)
+    expect((await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })).status).toBe(201)
+    expect((await api('GET', '/profile-avatar', { token: bob.token })).body.data.available).toBe(true)
 
     const text = await api('POST', '/files/upload', { token: alice.token, form: uploadForm(Buffer.from('just some text, not media'), 'a.png', 'image/png') })
     expect(text.body.error.message).toBe('Недопустимый тип файла')

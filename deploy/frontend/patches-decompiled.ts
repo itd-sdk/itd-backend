@@ -84,6 +84,24 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
       done: /\{ path: "\/search" \}\),\s*[\w$]+\([\w$]+, \{\s*path: "\/event\//
     },
     {
+      name: 'nuksta: sidebar button',
+      find: /\n\s*![\w$]+\?\.subscription\?\.isActive &&\s*[\w$]+\("button", \{\s*className: [\w$.]+,\s*onClick: \(\) => [\w$]+\(true\),\s*children: \[\s*[\w$]+\("span", \{ children: "⭐" \}\),\s*[\w$]+\("span", \{ children: "ИТД НУКСТА" \}\),\s*\],\s*\}\),/g,
+      replace: () => '',
+      done: /className: [\w$]+\.asideBottom,\s*children: [\w$]+\s*\?\s*[\w$]+\([\w$]+, \{\s*children: \[\s*[\w$]+\("button", \{\s*className: [\w$.]+,\s*onClick: [\w$]+,/
+    },
+    {
+      name: 'nuksta: profile button',
+      find: /\n\s*![\w$]+ &&\s*[\w$]+\([\w$]+, \{\s*variant: "secondary",\s*onClick: \(\) => [\w$]+\(true\),\s*fullWidth: [\w$]+,\s*children: "ИТД НУКСТА",\s*\}\),/g,
+      replace: () => '',
+      done: /children: "Редактировать",\s*\}\),\s*\],/
+    },
+    {
+      name: 'nuksta: payment settings tab',
+      find: /\n\s*\{ id: "payment", icon: [\w$]+, label: "Оплата", color: "#34c759" \},/g,
+      replace: () => '',
+      done: /\{ id: "account", icon: [\w$]+, label: "Аккаунт", color: "#3b82f6" \},\s*\{ id: "appearance"/
+    },
+    {
       name: 'icons: revalidate the browser cache',
       find: /([\w$]+) \? "no-cache" : "force-cache"/g,
       replace: () => '"no-cache"',

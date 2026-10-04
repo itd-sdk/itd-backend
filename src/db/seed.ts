@@ -7,8 +7,6 @@ import { closeDb, db } from './client'
 import { accounts, announcements, appVersions, changelog, notificationSettings, pins, userPins, users } from './schema'
 
 const PINS = [
-  // the client draws a pin only from `url`; this GIF is mirrored with the web client (deploy/frontend)
-  { slug: 'nuksta', name: 'НУКСТА', description: 'Подписчик НУКСТА', url: '/cdn/public/pins/nuksta.gif' },
   { slug: 'early', name: 'Первопроходец', description: 'Один из первых пользователей ИТД' },
   { slug: 'verified', name: 'Проверенный', description: 'Прошёл верификацию' },
   { slug: 'moderator', name: 'Модератор', description: 'Следит за порядком' },

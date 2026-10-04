@@ -100,10 +100,6 @@ export const config = {
     popularRebuildSeconds: int('POPULAR_REBUILD_SECONDS', isTest ? 0 : 60)
   },
 
-  subscription: {
-    priceRub: int('SUBSCRIPTION_PRICE_RUB', 199),
-    periodDays: int('SUBSCRIPTION_PERIOD_DAYS', 30)
-  },
 
   event: {
     enabled: bool('EVENT_ENABLED', false),

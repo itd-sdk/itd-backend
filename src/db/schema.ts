@@ -531,51 +531,6 @@ export const verificationRequests = pgTable(
   (t) => [index('verification_user_idx').on(t.userId, t.createdAt), index('verification_status_idx').on(t.status)]
 )
 
-// ---------------------------------------------------------------- subscription ("НУКСТА")
-
-export const subscriptions = pgTable('subscriptions', {
-  userId: uuid('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  startedAt: ts('started_at').notNull().defaultNow(),
-  expiresAt: ts('expires_at').notNull(),
-  autoRenewal: boolean('auto_renewal').notNull().default(true),
-  updatedAt: ts('updated_at').notNull().defaultNow()
-})
-
-export const paymentMethods = pgTable(
-  'payment_methods',
-  {
-    id: id(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    brand: text('brand').notNull(),
-    last4: text('last4').notNull(),
-    isDefault: boolean('is_default').notNull().default(false),
-    createdAt: createdAt()
-  },
-  (t) => [index('payment_methods_user_idx').on(t.userId)]
-)
-
-export const payments = pgTable(
-  'payments',
-  {
-    id: id(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'subscription' | 'bind_card' | 'renewal'>().notNull(),
-    amount: integer('amount').notNull(),
-    currency: text('currency').notNull().default('RUB'),
-    status: text('status').$type<'pending' | 'succeeded' | 'canceled'>().notNull().default('pending'),
-    paymentMethodId: uuid('payment_method_id'),
-    createdAt: createdAt(),
-    paidAt: ts('paid_at')
-  },
-  (t) => [index('payments_user_idx').on(t.userId, t.createdAt)]
-)
-
 // ---------------------------------------------------------------- platform content
 
 export const appVersions = pgTable('app_versions', {

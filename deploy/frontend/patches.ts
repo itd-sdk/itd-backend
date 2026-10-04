@@ -98,6 +98,25 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /\{path:"\/search"\}\),[\w$]+\([\w$]+,\{path:"\/event\//
     },
     {
+      // there is no НУКСТА subscription: its buttons and the payment settings go away
+      name: 'nuksta: sidebar button',
+      find: /![\w$]+\?\.subscription\?\.isActive&&[\w$]+\("button",\{className:[\w$.]+,onClick:\(\)=>[\w$]+\(!0\),children:\[[\w$]+\("span",\{children:"⭐"\}\),[\w$]+\("span",\{children:"ИТД НУКСТА"\}\)\]\}\),/g,
+      replace: () => '',
+      done: /children:\[[\w$]+\("button",\{className:[\w$.]+,onClick:[\w$]+,children:\[[\w$]+\([\w$]+,\{size:20\}\),[\w$]+\("span",\{children:"Выйти"\}\)/
+    },
+    {
+      name: 'nuksta: profile button',
+      find: /,![\w$]+&&[\w$]+\([\w$]+,\{variant:"secondary",onClick:\(\)=>[\w$]+\(!0\),fullWidth:[\w$]+,children:"ИТД НУКСТА"\}\)/g,
+      replace: () => '',
+      done: /children:"Редактировать"\}\)\]\}\)/
+    },
+    {
+      name: 'nuksta: payment settings tab',
+      find: /\{id:"payment",icon:[\w$]+,label:"Оплата",color:"#34c759"\},/g,
+      replace: () => '',
+      done: /\[\{id:"account",icon:[\w$]+,label:"Аккаунт",color:"#3b82f6"\},\{id:"appearance"/
+    },
+    {
       // icons were requested with cache:"force-cache" for 30 minutes, so a failed (404) response stuck in the
       // browser and Ctrl+F5 did not help; revalidate instead (4 small requests, usually 304)
       name: 'icons: revalidate the browser cache',

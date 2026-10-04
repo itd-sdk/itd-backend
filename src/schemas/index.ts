@@ -77,7 +77,6 @@ const userBriefFields = {
   avatar: t.String({ description: 'Emoji, or picture url for users with a picture avatar' }),
   clanAvatar: t.String({ description: 'Emoji avatar (clan)' }),
   verified: t.Boolean(),
-  hasNuksta: t.Boolean(),
   pin: Nullable(PinModel),
   activeNickname: Nullable(NicknameModel)
 }
@@ -123,7 +122,7 @@ export const UserProfileModel = t.Object({
 
 export const SubscriptionStateModel = t.Object({
   isActive: t.Boolean(),
-  expiresAt: Nullable(DateTime),
+  expiresAt: t.Null(),
   autoRenewal: t.Boolean()
 })
 

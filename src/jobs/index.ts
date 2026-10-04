@@ -3,7 +3,6 @@ import { db } from '../db/client'
 import { accounts, files, sessions, users } from '../db/schema'
 import { storage } from '../lib/storage'
 import { errorMeta, logger } from '../lib/logger'
-import { renewDueSubscriptions } from '../modules/subscription/service'
 import { markSessionsRevoked } from '../services/session-store'
 import { redis, rk } from '../redis'
 
@@ -75,7 +74,6 @@ type Job = { name: string; everyMs: number; run: () => Promise<unknown> }
 
 const JOBS: Job[] = [
   { name: 'purge-accounts', everyMs: 10 * 60_000, run: purgeExpiredAccounts },
-  { name: 'renew-subscriptions', everyMs: 10 * 60_000, run: renewDueSubscriptions },
   { name: 'lift-bans', everyMs: 5 * 60_000, run: liftExpiredBans },
   { name: 'cleanup-sessions', everyMs: 60 * 60_000, run: cleanupSessions }
 ]

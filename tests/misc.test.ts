@@ -3,9 +3,8 @@ import { deflateSync } from 'node:zlib'
 import { eq, sql } from 'drizzle-orm'
 import { config } from '../src/config'
 import { db } from '../src/db/client'
-import { accounts, follows, posts, subscriptions, users } from '../src/db/schema'
+import { accounts, follows, posts, users } from '../src/db/schema'
 import { liftExpiredBans, purgeAccount } from '../src/jobs'
-import { renewDueSubscriptions } from '../src/modules/subscription/service'
 import { api, app, createPost, createUser, PNG_1x1, resetState, type TestUser, uploadForm } from './helpers'
 
 beforeAll(resetState)
@@ -115,48 +114,6 @@ describe('files, reports, platform', () => {
   })
 })
 
-describe('subscription', () => {
-  test('mock checkout activates НУКСТА, grants the pin and manages cards', async () => {
-    const user = await createUser()
-    expect((await api('GET', '/v1/subscription', { token: user.token })).body).toMatchObject({ isActive: false, price: 199 })
-    expect((await api('POST', '/v1/subscription/auto-renewal', { token: user.token, body: { enabled: false } })).body.error).toEqual({
-      code: 'NOT_FOUND',
-      message: 'Активная подписка не найдена'
-    })
-
-    const pay = await api('POST', '/v1/subscription/pay', { token: user.token })
-    const url = new URL(pay.body.confirmationUrl)
-    const page = await app.handle(new Request(`http://localhost${url.pathname}${url.search}`))
-    expect(await page.text()).toContain('Оплатить')
-    const forged = await app.handle(new Request(`http://localhost${url.pathname}/confirm?sig=forged`, { method: 'POST' }))
-    expect(forged.status).toBe(400)
-    const confirm = await app.handle(new Request(`http://localhost${url.pathname}/confirm${url.search}`, { method: 'POST', headers: { accept: 'application/json' } }))
-    expect(await confirm.json()).toEqual({ success: true })
-
-    const state = await api('GET', '/v1/subscription', { token: user.token })
-    expect(state.body).toMatchObject({ isActive: true, autoRenewal: true, hasPaymentMethod: true })
-    expect((await api('GET', '/users/me', { token: user.token })).body).toMatchObject({ hasNuksta: true, subscription: { isActive: true } })
-    expect((await api('GET', '/users/me/pins', { token: user.token })).body.data.pins.map((p: any) => p.slug)).toContain('nuksta')
-    expect((await api('POST', '/v1/subscription/auto-renewal', { token: user.token, body: { enabled: false } })).body).toEqual({ autoRenewal: false })
-
-    const methods = await api('GET', '/v1/subscription/methods', { token: user.token })
-    expect(methods.body.data).toHaveLength(1)
-    expect(methods.body.data[0]).toMatchObject({ brand: 'MIR', isDefault: true })
-    expect((await api('DELETE', `/v1/subscription/methods/${methods.body.data[0].id}`, { token: user.token })).body.success).toBe(true)
-  })
-
-  test('renewal job charges the default card', async () => {
-    const user = await createUser()
-    const pay = await api('POST', '/v1/subscription/pay', { token: user.token })
-    const url = new URL(pay.body.confirmationUrl)
-    await app.handle(new Request(`http://localhost${url.pathname}/confirm${url.search}`, { method: 'POST' }))
-    await db.update(subscriptions).set({ expiresAt: sql`now() - interval '1 hour'` }).where(eq(subscriptions.userId, user.id))
-    expect((await api('GET', '/v1/subscription', { token: user.token })).body.isActive).toBe(false)
-    await renewDueSubscriptions()
-    expect((await api('GET', '/v1/subscription', { token: user.token })).body.isActive).toBe(true)
-  })
-})
-
 describe('verification, dwell, admin', () => {
   test('verification request reviewed by an admin', async () => {
     const user = await createUser()
@@ -236,7 +193,7 @@ describe('account purge', () => {
 })
 
 describe('pins', () => {
-  test('admin creates a pin with a picture and grants it; the default НУКСТА pin has one', async () => {
+  test('admin creates a pin with a picture and grants it', async () => {
     const admin = await makeAdmin(await createUser())
     const user = await createUser()
     const pin = { slug: 'founder', name: 'Основатель', description: 'Запустил сервер', url: '/uploads/founder.png' }
@@ -244,8 +201,7 @@ describe('pins', () => {
     expect((await api('POST', `/admin/users/${user.username}/pins`, { token: admin, body: { slug: 'founder' } })).body.success).toBe(true)
     expect((await api('PUT', '/users/me/pin', { token: user.token, body: { slug: 'founder' } })).body.success).toBe(true)
     expect((await api('GET', `/users/${user.username}`)).body.pin).toMatchObject({ slug: 'founder', url: '/uploads/founder.png' })
-    const all = (await api('GET', '/admin/pins', { token: admin })).body.pins
-    expect(all.find((p: any) => p.slug === 'nuksta').url).toBe('/cdn/public/pins/nuksta.gif')
+    expect((await api('GET', '/admin/pins', { token: admin })).body.pins.map((p: any) => p.slug)).toContain('founder')
   })
 })
 

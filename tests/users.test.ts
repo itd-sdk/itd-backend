@@ -35,7 +35,8 @@ describe('profile creation', () => {
     const ok = await create({})
     expect(ok.status).toBe(201)
     expect(ok.body).toMatchObject({ username: 'valid_name', avatar: '🦊', clanAvatar: '🦊', followersCount: 0, isDeleted: false })
-    expect(ok.body.subscription).toEqual({ isActive: false, expiresAt: null, autoRenewal: true })
+    expect(ok.body.subscription).toEqual({ isActive: true, expiresAt: null, autoRenewal: false })
+    expect(ok.body.hasNuksta).toBeUndefined()
     expect((await create({ username: 'other_name' })).body.error.code).toBe('PROFILE_EXISTS')
 
     const another = await registerWithoutProfile('another_user')

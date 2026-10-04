@@ -1,11 +1,10 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { files, subscriptions, users } from '../db/schema'
-import { ApiError, forbidden, validationError } from '../lib/errors'
+import { files, users } from '../db/schema'
+import { forbidden, validationError } from '../lib/errors'
 import { buildSpans, extractHashtags, extractMentions, sanitizeSpans, type SpanInput } from '../lib/text'
 import { assertNoBannedWords } from './moderation'
 import type { FileRow } from './posts'
-import { isSubscriptionActive } from './users'
 
 /** Validates text + spans and computes generated hashtag / mention spans */
 export async function prepareContent(content: string, spansInput: SpanInput[] | undefined, options: { maxLength: number; kind: 'Post' | 'Comment' | 'Reply' }) {
@@ -34,12 +33,7 @@ export async function prepareContent(content: string, spansInput: SpanInput[] | 
   }
 }
 
-export async function hasActiveSubscription(userId: string) {
-  const [row] = await db.select({ expiresAt: subscriptions.expiresAt }).from(subscriptions).where(eq(subscriptions.userId, userId)).limit(1)
-  return isSubscriptionActive(row?.expiresAt)
-}
-
-/** Resolves attachment ids: files must exist and belong to the author; video needs НУКСТА */
+/** Resolves attachment ids: files must exist and belong to the author */
 export async function resolveAttachments(ownerId: string, ids: string[], max: number): Promise<FileRow[]> {
   const unique = [...new Set(ids)]
   if (unique.length === 0) return []
@@ -49,9 +43,6 @@ export async function resolveAttachments(ownerId: string, ids: string[], max: nu
     .from(files)
     .where(and(inArray(files.id, unique), isNull(files.deletedAt)))
   if (rows.length !== unique.length || rows.some((f) => f.ownerId !== ownerId)) throw forbidden('Некоторые файлы не принадлежат вам')
-  if (rows.some((f) => f.kind === 'video') && !(await hasActiveSubscription(ownerId))) {
-    throw new ApiError(403, 'VIDEO_REQUIRES_NUKSTA', 'Загрузка видео доступна только с подпиской НУКСТА')
-  }
   const byId = new Map(rows.map((f) => [f.id, f]))
   return unique.map((id) => byId.get(id)!)
 }
