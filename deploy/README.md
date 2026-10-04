@@ -149,6 +149,9 @@ sudo -u itd -H bun deploy/frontend/build.ts --source /opt/itd-frontend --telegra
 не применилась (бандл изменился), сборка остановится. Результат — `deploy/frontend/dist`, отчёт —
 `dist/build-info.json`.
 
+Если часть картинок не скачалась (`! N images/sounds could not be downloaded`), просто запустите сборку
+ещё раз: уже скачанные файлы берутся из прошлой сборки, докачивается только недостающее; список — в
+`dist/build-info.json` (`missing`). Файлы из `missing.notOnSite` отсутствуют и на самом итд.com.
 Итд.com закрыт DDoS-Guard. Если с сервера он не открывается, соберите на своём компьютере (нужен Bun) и
 скопируйте: `rsync -a deploy/frontend/dist/ root@сервер:/opt/itd-backend/deploy/frontend/dist/`, затем
 `sudo chown -R itd:itd /opt/itd-backend/deploy/frontend/dist`. Режим `--offline` — только для проверки:

@@ -65,21 +65,44 @@ function ddosGuardHash(b: number) {
   return k
 }
 
+class NotFoundError extends Error {}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// the site throttles bursts (403/429) and has hiccups (5xx): retry those with growing pauses, 404 is final
 async function download(url: string): Promise<Buffer> {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url, { headers: { 'user-agent': UA, cookie: cookieHeader() } })
+  let challenges = 0
+  for (let attempt = 0; ; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(url, { headers: { 'user-agent': UA, cookie: cookieHeader() } })
+    } catch (error) {
+      if (attempt >= 4) throw error
+      await sleep(1000 * 2 ** attempt)
+      continue
+    }
     rememberCookies(res)
     const body = Buffer.from(await res.arrayBuffer())
     const challenge = jar.get('__js_p_')
     if (challenge && body.subarray(0, 600).toString().includes('<html>') && body.includes('get_jhash')) {
+      if (++challenges > 3) throw new Error(`DDoS-Guard challenge was not solved for ${url}`)
       jar.set('__jhash_', String(ddosGuardHash(Number(challenge.split(',')[0]))))
       jar.set('__jua_', encodeURIComponent(UA))
       continue
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-    return body
+    if (res.status === 404) throw new NotFoundError(`HTTP 404 for ${url}`)
+    if (res.ok) return body
+    if (attempt >= 4 || ![403, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`HTTP ${res.status} for ${url}`)
+    await sleep(Number(res.headers.get('retry-after')) * 1000 || 1000 * 2 ** attempt)
   }
-  throw new Error(`DDoS-Guard challenge was not solved for ${url}`)
+}
+
+/** A file kept from the previous build, so a rerun only downloads what is still missing */
+async function previous(relativePath: string) {
+  try {
+    return await readFile(join(TARGET, relativePath))
+  } catch {
+    return null
+  }
 }
 
 async function exists(path: string) {
@@ -188,27 +211,31 @@ for (const code of bundle.values()) for (const m of code.matchAll(staticRe)) sta
 const rootRefs = new Set<string>()
 for (const m of (html ?? '').matchAll(/(?:href|src|content)="\/(?!assets\/|\/)([^"?#]+\.[a-z0-9]+)"/gi)) rootRefs.add(m[1]!)
 
+const missing: { static: string[]; notOnSite: string[]; cdn: string[] } = { static: [], notOnSite: [], cdn: [] }
 let missingStatic = 0
 if (args.offline) {
   missingStatic = staticRefs.size
 } else {
   for (const name of staticRefs) {
     try {
-      await writeFile(join(ASSETS, name), await download(`${ORIGIN}/assets/${name}`))
-    } catch {
+      await writeFile(join(ASSETS, name), (await previous(`assets/${name}`)) ?? (await download(`${ORIGIN}/assets/${name}`)))
+    } catch (error) {
       missingStatic++
+      ;(error instanceof NotFoundError ? missing.notOnSite : missing.static).push(name)
     }
   }
   for (const name of rootRefs) {
     try {
       await mkdir(dirname(join(OUT, name)), { recursive: true })
-      await writeFile(join(OUT, name), await download(`${ORIGIN}/${name}`))
+      await writeFile(join(OUT, name), (await previous(name)) ?? (await download(`${ORIGIN}/${name}`)))
     } catch {
       warn(`could not download /${name}`)
     }
   }
 }
-if (missingStatic) warn(`${missingStatic} images/sounds referenced by the bundle are not available (${args.offline ? 'offline build' : 'download failed'})`)
+if (args.offline && missingStatic) warn(`${missingStatic} images/sounds referenced by the bundle are not available (offline build)`)
+if (missing.static.length) warn(`${missing.static.length} images/sounds could not be downloaded (run the build again later, see build-info.json)`)
+if (missing.notOnSite.length) warn(`${missing.notOnSite.length} images/sounds referenced by the bundle are not on the site (404)`)
 
 // ---------------------------------------------------------------- 4. CDN mirror (pins, error pictures, demo content)
 
@@ -221,13 +248,15 @@ if (!args.offline && !args['keep-cdn']) {
     try {
       const target = join(OUT, 'cdn', path)
       await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, await download(`${CDN}${path}`))
+      await writeFile(target, (await previous(`cdn${path}`)) ?? (await download(`${CDN}${path}`)))
       mirrored++
     } catch {
-      warn(`could not mirror ${CDN}${path}`)
+      missing.cdn.push(path)
     }
   }
 }
+
+if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirrored: ${missing.cdn.slice(0, 5).join(', ')}${missing.cdn.length > 5 ? ', …' : ''}`)
 
 // ---------------------------------------------------------------- 5. patches
 
@@ -320,6 +349,7 @@ const info = {
   patches: stats,
   cdnMirrored: mirrored,
   removedScripts: removed,
+  missing,
   warnings
 }
 await writeFile(join(OUT, 'build-info.json'), JSON.stringify(info, null, 2))
