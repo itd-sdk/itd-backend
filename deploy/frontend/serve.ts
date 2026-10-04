@@ -36,7 +36,11 @@ const server = Bun.serve({
     }
     // static folders must 404 instead of falling back to the app shell
     if (/^\/(assets|cdn)\//.test(path)) return new Response('Not found', { status: 404 })
-    return new Response(Bun.file(join(ROOT, 'index.html')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' } })
+    // the event mini-app (frame of /event/...) has its own app shell
+    const eventApp = path.match(/^\/public\/events\/[^/]+\//)?.[0]
+    const shell = Bun.file(join(ROOT, eventApp ?? '/', 'index.html'))
+    if (eventApp && !(await shell.exists())) return new Response('Not found', { status: 404 })
+    return new Response(shell, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' } })
   }
 })
 console.log(`frontend preview on http://localhost:${server.port} -> ${BACKEND}`)

@@ -207,6 +207,26 @@ sudo certbot --nginx -d ВАШ.ДОМЕН             # сертификат, HT
 в `sites-enabled/`) или `/etc/nginx/conf.d/*.conf`, логи — `/var/log/nginx/`. Сайт nginx читает от
 пользователя `www-data`, поэтому собранный веб-клиент кладите в `/var/www/itd`, а не в домашнюю папку.
 
+## Ивент
+
+1. В `.env` backend: `EVENT_ENABLED=true` (по желанию `EVENT_ENDS_AT=2026-12-31T21:00:00Z`, иначе ивент идёт
+   до начала следующего месяца). Портал включается вместе с ивентом, `PORTAL_*` трогать не нужно.
+2. `sudo systemctl restart itd-backend` — переменные из `.env` читаются только при запуске.
+3. Сама страница ивента — отдельное мини-приложение, которое итд.com раздаёт с `/public/events/aliceai/`;
+   его в itd-frontend нет, его скачивает сборка веб-клиента (шаг 6). В выводе сборки должна быть строка
+   `event app /public/events/aliceai: N files`; если вместо неё `is not available`, страница ивента будет пустой.
+4. В конфиге nginx нужен блок для мини-приложения (он есть в `deploy/nginx/itd.conf`, в Caddyfile тоже):
+
+   ```nginx
+   location ~ ^/public/events/([^/]+)/ {
+       try_files $uri /public/events/$1/index.html =404;
+       add_header Cache-Control "no-cache";
+   }
+   ```
+
+Проверка: `curl -s https://ВАШ.ДОМЕН/api/v1/portal` → `{"active":true,...,"url":"/public/events/aliceai/"}`,
+в меню появляется «Ивент», `/event/alice-ai` открывает мини-приложение во фрейме.
+
 ## Обновление
 
 ```bash
@@ -264,7 +284,7 @@ sudo tar czf uploads-$(date +%F).tgz -C /opt/itd-backend uploads    # загру
 
 ## Ограничения
 
-- магазин и страницы ивента грузятся с итд.com во фрейме, «Статус серверов» ведёт на статус.итд.com;
+- магазин убран из веб-клиента (это фрейм с магазином самого ИТД); «Статус серверов» ведёт на статус.итд.com;
 - оплата «НУКСТА» — тестовая заглушка;
 - картинки эмодзи веб-клиент берёт с cdn.jsdelivr.net (как и оригинал);
 - если itd-frontend отстанет от сайта и API поменяется, клиент и backend могут разойтись — обновите

@@ -79,6 +79,25 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /return\}(\w+)\(void 0\)\},\1=\w+\(async \w+=>\{/
     },
     {
+      // the shop is a frame with ITD's own store: removed from both menus and the router
+      name: 'shop: desktop menu item',
+      find: /[\w$]+\([\w$]+,\{href:"\/shop",icon:[\w$]+\([\w$]+,\{\}\),badge:[\w$]+,children:"Магаз"\}\),/g,
+      replace: () => '',
+      done: /children:"Поиск"\}\),\([\w$]+\.active/
+    },
+    {
+      name: 'shop: mobile menu item',
+      find: /\{id:"shop",label:"Магаз",icon:[\w$]+,href:"\/shop"\},/g,
+      replace: () => '',
+      done: /\{id:"feed",label:"Лента",icon:[\w$]+,href:"\/"\},\.\.\./
+    },
+    {
+      name: 'shop: route',
+      find: /,[\w$]+\([\w$]+,\{path:"\/shop\/:rest\*"\}\)/g,
+      replace: () => '',
+      done: /\{path:"\/search"\}\),[\w$]+\([\w$]+,\{path:"\/event\//
+    },
+    {
       // icons were requested with cache:"force-cache" for 30 minutes, so a failed (404) response stuck in the
       // browser and Ctrl+F5 did not help; revalidate instead (4 small requests, usually 304)
       name: 'icons: revalidate the browser cache',

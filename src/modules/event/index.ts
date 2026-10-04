@@ -80,11 +80,13 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     response: t.Object({ active: t.Boolean(), title: t.String(), url: t.String() })
   })
 
-  .get('/v1/event/status', () => ({ enabled: config.event.enabled, eventId: config.event.id, endsAt: eventEndsAt().toISOString() }), {
+  // the web client shows the event while `enabled` is true, so an event past EVENT_ENDS_AT reports false
+  .get('/v1/event/status', () => ({ enabled: config.event.enabled && eventEndsAt().getTime() > Date.now(), eventId: config.event.id, endsAt: eventEndsAt().toISOString() }), {
     response: t.Object({ enabled: t.Boolean(), eventId: t.String(), endsAt: t.String() })
   })
 
-  .get('/event-nicknames', ({ query }) => nicknamesFor(splitIds(query.ids)), { user: true, query: Ids })
+  // nicknames decorate posts, which guests see as well
+  .get('/event-nicknames', ({ query }) => nicknamesFor(splitIds(query.ids)), { optionalUser: true, query: Ids })
 
   // ------------------------------------------------------------ wallet, shop, inventory
 

@@ -66,6 +66,24 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
       done: /(\w+)\(undefined\);\n\s*\};\n\n\s*const \1 = /
     },
     {
+      name: 'shop: desktop menu item',
+      find: /\n\s*[\w$]+\([\w$]+, \{\s*href: "\/shop",\s*icon: [\w$]+\([\w$]+, \{\}\),\s*badge: [\w$]+,\s*children: "Магаз",\s*\}\),/g,
+      replace: () => '',
+      done: /children: "Поиск",?\s*\}\),\s*\(\([\w$]+\.active/
+    },
+    {
+      name: 'shop: mobile menu item',
+      find: /\n\s*\{ id: "shop", label: "Магаз", icon: [\w$]+, href: "\/shop" \},/g,
+      replace: () => '',
+      done: /\{ id: "feed", label: "Лента", icon: [\w$]+, href: "\/" \},\s*\.\.\./
+    },
+    {
+      name: 'shop: route',
+      find: /\n\s*[\w$]+\([\w$]+, \{ path: "\/shop\/:rest\*" \}\),/g,
+      replace: () => '',
+      done: /\{ path: "\/search" \}\),\s*[\w$]+\([\w$]+, \{\s*path: "\/event\//
+    },
+    {
       name: 'icons: revalidate the browser cache',
       find: /([\w$]+) \? "no-cache" : "force-cache"/g,
       replace: () => '"no-cache"',

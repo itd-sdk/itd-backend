@@ -108,8 +108,9 @@ export const config = {
   event: {
     enabled: bool('EVENT_ENABLED', false),
     portalTitle: str('PORTAL_TITLE', 'Портал'),
-    portalUrl: str('PORTAL_URL', '/event/alice-ai'),
-    portalActive: bool('PORTAL_ACTIVE', false),
+    // the web client opens the event frame only for an active portal pointing at the event app
+    portalUrl: str('PORTAL_URL', '/public/events/aliceai/'),
+    portalActive: bool('PORTAL_ACTIVE', bool('EVENT_ENABLED', false)),
     id: str('EVENT_ID', 'aliceai'),
     endsAt: optional('EVENT_ENDS_AT'),
     dailyReward: int('EVENT_DAILY_REWARD', 20)

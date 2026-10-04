@@ -110,6 +110,35 @@ async function previous(relativePath: string) {
   }
 }
 
+const removed: string[] = []
+const TRACKERS = /metrika|yandex|gtag|googletagmanager|google-analytics|clarity/i
+
+/** Drops third-party scripts and trackers of the original site; every tag is matched on its own so app scripts stay */
+function stripTrackers(page: string) {
+  return page
+    .replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (tag, attrs: string, body: string) => {
+      const src = attrs.match(/\bsrc="([^"]+)"/)?.[1]
+      if (src && /^(https?:)?\/\//.test(src) && !src.includes('challenges.cloudflare.com')) {
+        removed.push(src)
+        return ''
+      }
+      if (!src && TRACKERS.test(body)) {
+        removed.push(`inline ${body.match(TRACKERS)![0]}`)
+        return ''
+      }
+      return tag
+    })
+    .replace(/<noscript>([\s\S]*?)<\/noscript>/gi, (tag, body: string) => (TRACKERS.test(body) ? '' : tag))
+    .replace(/<link[^>]*rel="(?:preconnect|dns-prefetch)"[^>]*>/gi, '')
+}
+
+/** Sentry off, CDN links to the local mirror */
+function cleanCode(code: string) {
+  let result = code.replace(/dsn:"https?:\/\/[^"]*@sentry\.[^"]*"/g, 'dsn:""')
+  if (!args['keep-cdn']) result = result.replaceAll(CDN, '/cdn')
+  return result
+}
+
 function looksLikeHtml(body: Buffer) {
   return /^\s*(<!doctype html|<html|<head|<body)/i.test(body.subarray(0, 512).toString())
 }
@@ -255,18 +284,21 @@ const cdnRe = new RegExp(`${CDN.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(/[A-Za-
 const cdnPaths = new Set<string>()
 for (const code of bundle.values()) for (const m of code.matchAll(cdnRe)) cdnPaths.add(m[1]!)
 let mirrored = 0
-if (!args.offline && !args['keep-cdn']) {
-  for (const path of cdnPaths) {
-    try {
-      const target = join(OUT, 'cdn', path)
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, (await previous(`cdn${path}`)) ?? (await download(`${CDN}${path}`)))
-      mirrored++
-    } catch {
-      missing.cdn.push(path)
-    }
+const cdnDone = new Set<string>()
+async function mirrorCdn(path: string) {
+  if (args.offline || args['keep-cdn'] || cdnDone.has(path)) return
+  cdnDone.add(path)
+  try {
+    const target = join(OUT, 'cdn', path)
+    const body = (await previous(`cdn${path}`)) ?? (await download(`${CDN}${path}`))
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, body)
+    mirrored++
+  } catch {
+    missing.cdn.push(path)
   }
 }
+for (const path of cdnPaths) await mirrorCdn(path)
 
 // UI icons are fetched at runtime from `${CDN}/public/assets/icons/<name>.svg` (the URL is built in code, so the
 // mirror above does not see it); names come from calls like `X(Icon,{name:a?"liked":"like"})`
@@ -295,6 +327,77 @@ if (!args.offline && !args['keep-cdn'] && [...bundle.values()].some((code) => co
   }
   if (!icons.names.includes('like')) warn('UI icons (like/comment/share) could not be mirrored, run the build again')
 }
+// ---------------------------------------------------------------- 4b. event mini-apps
+
+// /event/alice-ai is a frame with a separate app the site serves from /public/events/<id>/ on the same origin.
+// It is not part of itd-frontend: mirror its page and every file it references under that path.
+const ASSET_REF = /["'`(]((?:\.{1,2}\/|\/)?[A-Za-z0-9_@~./-]+\.(?:m?js|css|png|svg|jpe?g|webp|gif|avif|ico|mp3|wav|ogg|mp4|webm|woff2?|ttf|otf|json))["'`)]/g
+const eventApps: { base: string; files: number }[] = []
+const eventBases = new Set<string>()
+for (const code of bundle.values()) for (const m of code.matchAll(/"(\/public\/events\/[a-z0-9_-]+)"/g)) eventBases.add(m[1]!)
+
+async function mirrorEventApp(base: string) {
+  const origin = new URL(ORIGIN).origin
+  const root = `${ORIGIN}${base}/`
+  const page = (await download(root)).toString('utf8')
+  if (!/<script\b/i.test(page)) throw new Error('the page has no scripts')
+  const queue: string[] = []
+  const add = (ref: string, from: string) => {
+    let url: URL
+    try {
+      url = new URL(ref, from)
+    } catch {
+      return
+    }
+    if (url.origin === origin && url.pathname.startsWith(`${base}/`) && !url.pathname.endsWith('/')) queue.push(url.pathname)
+  }
+  for (const m of page.matchAll(/(?:src|href)="([^"]+)"/g)) add(m[1]!, root)
+  const seen = new Set<string>()
+  let files = 0
+  while (queue.length) {
+    const path = queue.shift()!
+    if (seen.has(path)) continue
+    seen.add(path)
+    const code = /\.(m?js|css)$/.test(path)
+    let body: Buffer
+    try {
+      body = (!code && (await previous(path.slice(1)))) || (await download(`${origin}${path}`))
+    } catch (error) {
+      // module-relative and base-relative guesses for the same reference: one of them is a 404
+      if (!(error instanceof NotFoundError)) missing.static.push(path)
+      continue
+    }
+    if (code) {
+      const text = body.toString('utf8')
+      for (const m of text.matchAll(ASSET_REF)) {
+        add(m[1]!, `${origin}${path}`)
+        add(m[1]!, root)
+      }
+      for (const m of text.matchAll(cdnRe)) await mirrorCdn(m[1]!)
+      body = Buffer.from(cleanCode(text))
+    }
+    await mkdir(dirname(join(OUT, path)), { recursive: true })
+    await writeFile(join(OUT, path), body)
+    files++
+  }
+  for (const m of page.matchAll(cdnRe)) await mirrorCdn(m[1]!)
+  await mkdir(join(OUT, base), { recursive: true })
+  await writeFile(join(OUT, base, 'index.html'), stripTrackers(cleanCode(page)))
+  return files
+}
+
+if (!args.offline) {
+  for (const base of eventBases) {
+    try {
+      const files = await mirrorEventApp(base)
+      eventApps.push({ base, files })
+      console.log(`event app ${base}: ${files} files`)
+    } catch (error) {
+      warn(`event app ${base} is not available (${(error as Error).message}); the event page will be empty`)
+    }
+  }
+}
+
 if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirrored: ${missing.cdn.slice(0, 5).join(', ')}${missing.cdn.length > 5 ? ', …' : ''}`)
 
 // ---------------------------------------------------------------- 5. patches
@@ -383,23 +486,7 @@ let page =
 if (html && liveEntry && liveEntry !== sourceEntry) page = page.replace(`/assets/${liveEntry}`, `/assets/${entry}`)
 page = renameRefs(page)
 
-const removed: string[] = []
-const TRACKERS = /metrika|yandex|gtag|googletagmanager|google-analytics|clarity/i
-// third-party scripts and trackers of the original site; every tag is matched on its own so the entry script stays
-page = page.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (tag, attrs: string, body: string) => {
-  const src = attrs.match(/\bsrc="([^"]+)"/)?.[1]
-  if (src && /^(https?:)?\/\//.test(src) && !src.includes('challenges.cloudflare.com')) {
-    removed.push(src)
-    return ''
-  }
-  if (!src && TRACKERS.test(body)) {
-    removed.push(`inline ${body.match(TRACKERS)![0]}`)
-    return ''
-  }
-  return tag
-})
-page = page.replace(/<noscript>([\s\S]*?)<\/noscript>/gi, (tag, body: string) => (TRACKERS.test(body) ? '' : tag))
-page = page.replace(/<link[^>]*rel="(?:preconnect|dns-prefetch)"[^>]*>/gi, '')
+page = stripTrackers(page)
 page = page.replace(/<\/head>/i, `  ${CAPTCHA_STUB}\n  </head>`)
 await writeFile(join(OUT, 'index.html'), page)
 
@@ -416,6 +503,7 @@ const info = {
   removedScripts: removed,
   missing,
   icons: icons.names,
+  eventApps,
   warnings
 }
 await writeFile(join(OUT, 'build-info.json'), JSON.stringify(info, null, 2))

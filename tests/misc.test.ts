@@ -240,6 +240,15 @@ describe('event', () => {
     const owner = await createUser()
     const guest = await createUser()
     expect((await api('GET', '/v1/event/status')).body.enabled).toBe(true)
+    // the web client opens the event frame only for an active portal pointing at the event app
+    expect((await api('GET', '/v1/portal')).body).toMatchObject({ active: true, url: '/public/events/aliceai/' })
+    const endsAt = config.event.endsAt
+    config.event.endsAt = '2020-01-01T00:00:00Z'
+    try {
+      expect((await api('GET', '/v1/event/status')).body.enabled).toBe(false)
+    } finally {
+      config.event.endsAt = endsAt
+    }
     const claim = await api('POST', `/v1/aliceai/profiles/${guest.id}/claim`, { token: guest.token })
     expect(claim.body).toMatchObject({ success: true, reward: 20, balance: 20 })
     expect((await api('POST', `/v1/aliceai/profiles/${guest.id}/claim`, { token: guest.token })).body.error.code).toBe('ALREADY_CLAIMED')
@@ -269,6 +278,8 @@ describe('event', () => {
     const nicknames = await api('GET', `/event-nicknames?ids=${owner.id},${guest.id}`, { token: guest.token })
     expect(nicknames.body.data[owner.id].label).toBe(bought.body.item.label)
     expect(nicknames.body.data[guest.id]).toBeNull()
+    // guests see nicknames on posts too
+    expect((await api('GET', `/event-nicknames?ids=${owner.id}`)).body.data[owner.id].label).toBe(bought.body.item.label)
     expect((await api('GET', `/users/${owner.username}`)).body.activeNickname.label).toBe(bought.body.item.label)
   })
 

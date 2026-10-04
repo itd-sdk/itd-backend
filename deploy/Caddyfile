@@ -39,6 +39,14 @@ itd.example.com {
 		file_server
 	}
 
+	# event mini-app (the frame of /event/...): its own app shell
+	@eventapp path_regexp eventapp ^/public/events/([^/]+)/
+	handle @eventapp {
+		header Cache-Control "no-cache"
+		try_files {path} /public/events/{re.eventapp.1}/index.html
+		file_server
+	}
+
 	# single-page app: unknown paths render index.html
 	handle {
 		header Cache-Control "no-cache"
