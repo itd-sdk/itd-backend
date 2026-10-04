@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the official Python itd-sdk against a local backend.
-# The server must run with EMAIL_VERIFICATION=false (accounts are created through the REST API).
+# The server must run with TELEGRAM_VERIFICATION=false (accounts are created through the REST API, the SDK signs in without a code).
 set -euo pipefail
 cd "$(dirname "$0")"
 API="${ITD_API:-http://localhost:3000/api}"

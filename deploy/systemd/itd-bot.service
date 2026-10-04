@@ -1,0 +1,20 @@
+[Unit]
+Description=ITD Telegram bot (login codes)
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=itd
+Group=itd
+WorkingDirectory=/opt/itd-backend/deploy/telegram-bot
+EnvironmentFile=/opt/itd-backend/deploy/telegram-bot/.env
+ExecStart=/opt/itd-backend/deploy/telegram-bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

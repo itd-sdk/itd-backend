@@ -8,6 +8,13 @@
       "when": 1791116685196,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791130000000,
+      "tag": "0001_telegram",
+      "breakpoints": true
     }
   ]
 }

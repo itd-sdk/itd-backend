@@ -6,7 +6,7 @@ import { accounts, sessions } from '../../db/schema'
 import { ApiError, badRequest, conflict, notFound, unauthorized } from '../../lib/errors'
 import { hashPassword, isValidPassword, verifyPassword } from '../../lib/password'
 import { sseResponse } from '../../lib/sse'
-import { verifyTurnstile } from '../../lib/turnstile'
+import { assertTelegram, normalizeTelegram, requireTelegramChat } from '../../lib/telegram'
 import { authPlugin, readAuth } from '../../plugins/auth'
 import { contextPlugin } from '../../plugins/context'
 import { enforceActionLimit } from '../../services/rate-limit'
@@ -14,19 +14,18 @@ import { qrChannel, subscribe } from '../../services/realtime'
 import { SessionModel, SuccessModel, Uuid } from '../../schemas'
 import { assertClaim, consumeQr, decideQr, loadQr, qrTtlMs, scanQr, startQr } from './qr'
 import {
-  assertEmailAllowed,
   assertNotBanned,
   checkOtp,
   clearAuthCookies,
   createSession,
+  describeClient,
   dropFlow,
   findAccount,
-  findAccountByEmail,
+  findAccountByTelegram,
   findSessionByRefreshToken,
   liftExpiredBan,
   listActiveSessions,
   loadFlow,
-  normalizeEmail,
   presentSession,
   readRefreshCookie,
   refreshSession,
@@ -48,17 +47,24 @@ const TokenModel = t.Object({
   otp: t.Optional(t.String({ description: 'Only in development (DEV_EXPOSE_OTP=true)' }))
 })
 
-const Credentials = t.Object({
-  email: t.String({ maxLength: 254 }),
-  password: t.String({ maxLength: 256 }),
-  turnstileToken: t.Optional(t.String({ maxLength: 4096 })),
-  token: t.Optional(t.String({ maxLength: 4096 }))
-})
+// the web client and itd-sdk send the login as `email`; it holds a Telegram username here
+const Login = {
+  telegram: t.Optional(t.String({ maxLength: 64, description: 'Telegram username: nick, @nick or t.me/nick' })),
+  email: t.Optional(t.String({ maxLength: 64, description: 'Alias of telegram (field name used by the web client)' }))
+}
+const Credentials = t.Object({ ...Login, password: t.String({ maxLength: 256 }) })
 
-// comparing against a dummy hash keeps sign-in timing similar for unknown emails
+function loginOf(body: { telegram?: string; email?: string }) {
+  const telegram = normalizeTelegram(body.telegram ?? body.email ?? '')
+  assertTelegram(telegram)
+  return telegram
+}
+
+// comparing against a dummy hash keeps sign-in timing similar for unknown accounts
 let dummyHash: Promise<string> | undefined
 const getDummyHash = () => (dummyHash ??= hashPassword(crypto.randomUUID()))
-const INVALID_CREDENTIALS = () => new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password')
+const INVALID_CREDENTIALS = () => new ApiError(401, 'INVALID_CREDENTIALS', 'Неверный ник Telegram или пароль')
+const ALREADY_REGISTERED = () => conflict('Этот Telegram уже зарегистрирован', 'ENTITY_ALREADY_EXISTS')
 
 const flowResponse = (flowToken: string, nextStep: string, otp: string) => ({
   flowToken,
@@ -72,69 +78,61 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .use(authPlugin)
   .derive(({ ip, country, deviceId, userAgent }) => ({ client: { ip, country, deviceId, userAgent } }))
 
-  .get(
-    '/captcha/provider',
-    () => ({
-      provider: config.auth.turnstileSecret ? 'cloudflare' : 'none',
-      siteKey: config.auth.turnstileSiteKey ?? null,
-      tokenField: 'turnstileToken'
-    }),
-    { detail: { summary: 'Captcha provider used by sign-in / sign-up' } }
-  )
-
   .post(
     '/sign-up',
     async ({ body, client, cookie, set }) => {
-      const email = normalizeEmail(body.email)
-      assertEmailAllowed(email)
+      const telegram = loginOf(body)
       if (!isValidPassword(body.password)) throw badRequest('Password must be 10-128 printable ASCII characters', 'INVALID_PASSWORD')
       await enforceActionLimit('sign_in', client.ip)
-      if (!(await verifyTurnstile(body.turnstileToken ?? body.token, client.ip))) throw badRequest('Captcha verification failed', 'TURNSTILE_VERIFICATION_FAILED')
-      if (await findAccountByEmail(email)) throw conflict('Email is already registered')
+      if (await findAccountByTelegram(telegram)) throw ALREADY_REGISTERED()
 
       const passwordHash = await hashPassword(body.password)
-      if (!config.auth.emailVerification) {
-        const [account] = await db.insert(accounts).values({ email, passwordHash, emailVerifiedAt: new Date() }).returning()
+      if (!config.auth.telegramVerification) {
+        const [account] = await db.insert(accounts).values({ telegram, passwordHash, verifiedAt: new Date() }).returning()
         const { accessToken, refreshToken } = await createSession(account!, client)
         setAuthCookies(cookie, refreshToken)
         set.status = 201
         return { accessToken, expiresIn: config.auth.accessTokenTtl }
       }
-      const { flowToken, otp } = await startFlow({ purpose: 'signup', email, accountId: null, passwordHash })
+      const chatId = await requireTelegramChat(telegram)
+      const { flowToken, otp } = await startFlow({ purpose: 'signup', telegram, chatId, device: describeClient(client), accountId: null, passwordHash })
       return flowResponse(flowToken, 'verify_email', otp)
     },
-    { body: Credentials, response: { 200: TokenModel, 201: TokenModel }, detail: { summary: 'Register with email and password' } }
+    {
+      body: Credentials,
+      response: { 200: TokenModel, 201: TokenModel },
+      detail: { summary: 'Register with a Telegram username and password; the code comes from the Telegram bot' }
+    }
   )
 
   .post(
     '/sign-in',
     async ({ body, client, cookie }) => {
-      const email = normalizeEmail(body.email)
-      assertEmailAllowed(email)
-      await enforceActionLimit('sign_in', `${client.ip}:${email}`)
-      if (!(await verifyTurnstile(body.turnstileToken ?? body.token, client.ip))) throw badRequest('Captcha verification failed', 'TURNSTILE_VERIFICATION_FAILED')
+      const telegram = loginOf(body)
+      await enforceActionLimit('sign_in', `${client.ip}:${telegram}`)
 
-      const account = await findAccountByEmail(email)
+      const account = await findAccountByTelegram(telegram)
       const valid = await verifyPassword(body.password, account?.passwordHash ?? (await getDummyHash()))
       if (!account || !valid) throw INVALID_CREDENTIALS()
       await liftExpiredBan(account)
       assertNotBanned(account)
 
-      if (config.auth.emailVerification && !account.emailVerifiedAt) {
-        const { flowToken, otp } = await startFlow({ purpose: 'login', email, accountId: account.id, passwordHash: null })
+      if (config.auth.telegramVerification && (config.auth.loginCode || !account.verifiedAt)) {
+        const chatId = account.telegramChatId ?? (await requireTelegramChat(telegram))
+        const { flowToken, otp } = await startFlow({ purpose: 'login', telegram, chatId, device: describeClient(client), accountId: account.id, passwordHash: null })
         return flowResponse(flowToken, 'verify_email', otp)
       }
       const { accessToken, refreshToken } = await createSession(account, client)
       setAuthCookies(cookie, refreshToken)
       return { accessToken, expiresIn: config.auth.accessTokenTtl }
     },
-    { body: Credentials, response: TokenModel, detail: { summary: 'Sign in; sets the refresh_token cookie' } }
+    { body: Credentials, response: TokenModel, detail: { summary: 'Sign in; with LOGIN_CODE a Telegram code is required, otherwise sets the refresh_token cookie' } }
   )
 
   .post(
     '/verify-otp',
     async ({ body, client, cookie }) => {
-      const flow = await loadFlow(body.flowToken, body.email)
+      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
       await checkOtp(body.flowToken, flow, body.otp)
 
       if (flow.purpose === 'reset') {
@@ -143,17 +141,20 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
         return { flowToken: body.flowToken, nextStep: 'reset_password' }
       }
 
-      let account = flow.accountId ? await findAccount(flow.accountId) : await findAccountByEmail(flow.email)
+      let account = flow.accountId ? await findAccount(flow.accountId) : await findAccountByTelegram(flow.telegram)
       if (flow.purpose === 'signup') {
-        if (account) throw conflict('Email is already registered')
+        if (account) throw ALREADY_REGISTERED()
         ;[account] = await db
           .insert(accounts)
-          .values({ email: flow.email, passwordHash: flow.passwordHash!, emailVerifiedAt: new Date() })
+          .values({ telegram: flow.telegram, telegramChatId: flow.chatId, passwordHash: flow.passwordHash!, verifiedAt: new Date() })
           .returning()
       } else {
         if (!account) throw badRequest('Account not found', 'ACCOUNT_NOT_FOUND')
         assertNotBanned(account)
-        await db.update(accounts).set({ emailVerifiedAt: new Date() }).where(eq(accounts.id, account.id))
+        await db
+          .update(accounts)
+          .set({ verifiedAt: account.verifiedAt ?? new Date(), telegramChatId: account.telegramChatId ?? flow.chatId })
+          .where(eq(accounts.id, account.id))
       }
       await dropFlow(body.flowToken)
       const { accessToken, refreshToken } = await createSession(account!, client)
@@ -164,50 +165,56 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
       body: t.Object({
         flowToken: t.String({ maxLength: 128 }),
         otp: t.String({ maxLength: 16 }),
-        email: t.Optional(t.String({ maxLength: 254 })),
+        ...Login,
         password: t.Optional(t.String({ maxLength: 256 }))
       }),
       response: TokenModel,
-      detail: { summary: 'Confirm a one-time code (sign-up, unverified sign-in, password reset)' }
+      detail: { summary: 'Confirm a Telegram code (sign-up, sign-in, password reset)' }
     }
   )
 
   .post(
     '/resend-otp',
     async ({ body }) => {
-      const flow = await loadFlow(body.flowToken, body.email)
+      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
       const otp = await resendOtp(body.flowToken, flow)
       return { success: true, expiresIn: config.auth.otpTtl, ...(config.auth.exposeOtp ? { otp } : {}) }
     },
     {
-      body: t.Object({ flowToken: t.String({ maxLength: 128 }), email: t.Optional(t.String({ maxLength: 254 })) }),
-      detail: { summary: 'Send the one-time code again' }
+      body: t.Object({ flowToken: t.String({ maxLength: 128 }), ...Login }),
+      detail: { summary: 'Send the code again' }
     }
   )
 
   .post(
     '/forgot-password',
     async ({ body, client }) => {
-      const email = normalizeEmail(body.email)
-      assertEmailAllowed(email)
+      const telegram = loginOf(body)
       await enforceActionLimit('otp', client.ip)
-      if (!(await verifyTurnstile(body.turnstileToken ?? body.token, client.ip))) throw badRequest('Captcha verification failed', 'TURNSTILE_VERIFICATION_FAILED')
-      const account = await findAccountByEmail(email)
-      // same answer for unknown emails: no account enumeration
-      const { flowToken, otp } = await startFlow({ purpose: 'reset', email, accountId: account?.id ?? null, passwordHash: null }, !!account)
+      const account = await findAccountByTelegram(telegram)
+      // the bot check does not depend on the account, so unknown and existing accounts look the same
+      const chatId = account?.telegramChatId ?? (await requireTelegramChat(telegram))
+      const { flowToken, otp } = await startFlow({
+        purpose: 'reset',
+        telegram,
+        chatId: account ? chatId : null,
+        device: describeClient(client),
+        accountId: account?.id ?? null,
+        passwordHash: null
+      })
       return flowResponse(flowToken, 'verify_otp', account ? otp : '')
     },
     {
-      body: t.Object({ email: t.String({ maxLength: 254 }), turnstileToken: t.Optional(t.String()), token: t.Optional(t.String()) }),
+      body: t.Object(Login),
       response: TokenModel,
-      detail: { summary: 'Start password recovery (sends a code by email)' }
+      detail: { summary: 'Start password recovery (the code comes from the Telegram bot)' }
     }
   )
 
   .post(
     '/reset-password',
     async ({ body }) => {
-      const flow = await loadFlow(body.flowToken, body.email)
+      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
       if (flow.purpose !== 'reset') throw badRequest('Invalid flow', 'INVALID_FLOW_TOKEN')
       if (!flow.verified) await checkOtp(body.flowToken!, flow, body.otp)
       if (!flow.accountId) throw badRequest('Invalid code', 'INVALID_OTP')
@@ -215,7 +222,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
 
       await db
         .update(accounts)
-        .set({ passwordHash: await hashPassword(body.newPassword), passwordChangedAt: new Date(), emailVerifiedAt: new Date(), updatedAt: new Date() })
+        .set({ passwordHash: await hashPassword(body.newPassword), passwordChangedAt: new Date(), verifiedAt: new Date(), updatedAt: new Date() })
         .where(eq(accounts.id, flow.accountId))
       await revokeAllSessions(flow.accountId, { reason: 'password_reset' })
       await dropFlow(body.flowToken!)
@@ -226,7 +233,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
         flowToken: t.String({ maxLength: 128 }),
         newPassword: t.String({ maxLength: 256 }),
         otp: t.Optional(t.String({ maxLength: 16 })),
-        email: t.Optional(t.String({ maxLength: 254 }))
+        ...Login
       }),
       response: SuccessModel,
       detail: { summary: 'Set a new password after code confirmation' }

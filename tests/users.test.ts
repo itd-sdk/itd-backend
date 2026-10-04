@@ -2,19 +2,20 @@ import { beforeAll, describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/client'
 import { userPins } from '../src/db/schema'
-import { api, createPost, createUser, resetState } from './helpers'
+import { api, createPost, createUser, pressStart, resetState } from './helpers'
 
 beforeAll(resetState)
 
-async function registerWithoutProfile(email: string) {
-  const signUp = await api('POST', '/v1/auth/sign-up', { body: { email, password: 'correct-horse-battery' } })
+async function registerWithoutProfile(telegram: string) {
+  await pressStart(telegram)
+  const signUp = await api('POST', '/v1/auth/sign-up', { body: { telegram, password: 'correct-horse-battery' } })
   const { otp, flowToken } = signUp.body
-  return (await api('POST', '/v1/auth/verify-otp', { body: { email, otp, flowToken } })).body.accessToken as string
+  return (await api('POST', '/v1/auth/verify-otp', { body: { telegram, otp, flowToken } })).body.accessToken as string
 }
 
 describe('profile creation', () => {
   test('profile is required after registration', async () => {
-    const token = await registerWithoutProfile('fresh@example.com')
+    const token = await registerWithoutProfile('fresh_user')
     const me = await api('GET', '/users/me', { token })
     expect(me.status).toBe(404)
     expect(me.body.error.code).toBe('PROFILE_NOT_FOUND')
@@ -25,7 +26,7 @@ describe('profile creation', () => {
   })
 
   test('validates username, display name and emoji avatar', async () => {
-    const token = await registerWithoutProfile('validate@example.com')
+    const token = await registerWithoutProfile('validate_user')
     const create = (body: Record<string, string>) => api('POST', '/users/profile', { token, body: { username: 'valid_name', displayName: 'Name', avatar: '🦊', ...body } })
     expect((await create({ username: '1abc' })).body.error.code).toBe('VALIDATION_ERROR')
     expect((await create({ username: 'admin' })).body.error.code).toBe('USERNAME_RESERVED')
@@ -37,7 +38,7 @@ describe('profile creation', () => {
     expect(ok.body.subscription).toEqual({ isActive: false, expiresAt: null, autoRenewal: true })
     expect((await create({ username: 'other_name' })).body.error.code).toBe('PROFILE_EXISTS')
 
-    const another = await registerWithoutProfile('another@example.com')
+    const another = await registerWithoutProfile('another_user')
     const taken = await api('POST', '/users/profile', { token: another, body: { username: 'VALID_NAME', displayName: 'X', avatar: '🦊' } })
     expect(taken.status).toBe(409)
     expect(taken.body.error.code).toBe('USERNAME_TAKEN')

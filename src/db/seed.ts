@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { config } from '../config'
 import { hashPassword } from '../lib/password'
+import { normalizeTelegram } from '../lib/telegram'
 import { closeRedis } from '../redis'
 import { closeDb, db } from './client'
 import { accounts, announcements, appVersions, changelog, notificationSettings, pins, userPins, users } from './schema'
@@ -45,14 +46,14 @@ export async function seedReferenceData() {
 }
 
 export async function seedAdmin() {
-  const { email, password, username } = config.admin
-  if (!email || !password) return null
-  const normalized = email.trim().toLowerCase()
-  let [account] = await db.select().from(accounts).where(eq(accounts.email, normalized)).limit(1)
+  const { telegram, password, username } = config.admin
+  if (!telegram || !password) return null
+  const normalized = normalizeTelegram(telegram)
+  let [account] = await db.select().from(accounts).where(eq(accounts.telegram, normalized)).limit(1)
   if (!account) {
     ;[account] = await db
       .insert(accounts)
-      .values({ email: normalized, passwordHash: await hashPassword(password), emailVerifiedAt: new Date(), roles: ['user', 'admin'] })
+      .values({ telegram: normalized, passwordHash: await hashPassword(password), verifiedAt: new Date(), roles: ['user', 'admin'] })
       .returning()
   } else {
     await db.update(accounts).set({ roles: ['user', 'admin'] }).where(eq(accounts.id, account.id))
@@ -73,6 +74,6 @@ export async function seedAdmin() {
 if (import.meta.main) {
   await seedReferenceData()
   const adminId = await seedAdmin()
-  console.log('reference data seeded', adminId ? `(admin ${adminId})` : '(set ADMIN_EMAIL / ADMIN_PASSWORD to create an admin)')
+  console.log('reference data seeded', adminId ? `(admin ${adminId})` : '(set ADMIN_TELEGRAM / ADMIN_PASSWORD to create an admin)')
   await Promise.allSettled([closeDb(), closeRedis()])
 }

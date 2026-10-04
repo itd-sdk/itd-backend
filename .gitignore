@@ -11,3 +11,7 @@ node_modules/
 /coverage/
 /.scratch/
 .venv/
+/deploy/frontend/dist/
+/deploy/frontend/dist.tmp/
+__pycache__/
+/deploy/telegram-bot/.venv/

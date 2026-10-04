@@ -1,0 +1,48 @@
+# /etc/caddy/Caddyfile — replace itd.example.com with your domain
+itd.example.com {
+	encode zstd gzip
+
+	@backend path /api /api/* /uploads/* /health
+	handle @backend {
+		reverse_proxy 127.0.0.1:3000 {
+			# the backend trusts these headers (TRUST_PROXY=true): never pass client-supplied values through.
+			# Behind Cloudflare remove these lines and configure trusted_proxies instead.
+			header_up -CF-Connecting-IP
+			header_up -CF-IPCountry
+			header_up -X-Real-IP
+			# server-sent events (/api/notifications/stream)
+			flush_interval -1
+		}
+	}
+
+	# API docs; remove this block to keep them private
+	handle /swagger* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	root * /opt/itd-backend/deploy/frontend/dist
+
+	# hashed file names: cache forever, but never a 404
+	handle /assets/* {
+		header {
+			Cache-Control "public, max-age=31536000, immutable"
+			match status 200
+		}
+		file_server
+	}
+
+	handle /cdn/* {
+		header {
+			Cache-Control "public, max-age=86400"
+			match status 200
+		}
+		file_server
+	}
+
+	# single-page app: unknown paths render index.html
+	handle {
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

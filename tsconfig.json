@@ -16,5 +16,5 @@
     "noUnusedParameters": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "tests", "drizzle.config.ts"]
+  "include": ["src", "tests", "deploy", "drizzle.config.ts"]
 }

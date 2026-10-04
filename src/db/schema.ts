@@ -47,9 +47,12 @@ export type NotificationType =
 
 export const accounts = pgTable('accounts', {
   id: id(),
-  email: text('email').notNull().unique(),
+  // login: Telegram username, lowercase without @
+  telegram: text('telegram').notNull().unique(),
+  // chat that confirmed the account; codes keep going there even if the username changes
+  telegramChatId: text('telegram_chat_id'),
   passwordHash: text('password_hash').notNull(),
-  emailVerifiedAt: ts('email_verified_at'),
+  verifiedAt: ts('verified_at'),
   roles: text('roles').array().$type<Role[]>().notNull().default(sql`'{user}'::text[]`),
   bannedAt: ts('banned_at'),
   bannedUntil: ts('banned_until'),

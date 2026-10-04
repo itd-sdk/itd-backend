@@ -16,7 +16,7 @@ def rest(method, path, body=None, token=None):
         return json.loads(r.read().decode() or 'null')
 
 def make_account(name, avatar):
-    email = f'{name}-{RUN}@example.com'
+    email = f'{name}_{RUN}'  # Telegram username; the SDK sends it as `email`
     tok = rest('POST', '/v1/auth/sign-up', {'email': email, 'password': PASSWORD})['accessToken']
     rest('POST', '/users/profile', {'username': f'{name}{RUN}', 'displayName': name.title(), 'avatar': avatar}, tok)
     return email

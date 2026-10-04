@@ -264,12 +264,14 @@ export async function presentProfiles(list: UserRecord[], viewerId: string | nul
   return list.map((user) => presentProfile(user, viewerId, relations.get(user.id), presence.get(user.id)))
 }
 
-export function presentMe(user: UserRecord, account: { email: string; roles: string[] }) {
+export function presentMe(user: UserRecord, account: { telegram: string; roles: string[] }) {
   return {
     ...presentBrief(user),
     banner: user.bannerUrl,
     bio: user.bio,
-    email: account.email,
+    // the web client shows `email` in settings
+    email: `@${account.telegram}`,
+    telegram: account.telegram,
     roles: account.roles,
     wallAccess: user.wallAccess,
     likesVisibility: user.likesVisibility,

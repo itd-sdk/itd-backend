@@ -53,15 +53,13 @@ export const config = {
     cookieSecure: bool('COOKIE_SECURE', isProduction),
     cookieDomain: optional('COOKIE_DOMAIN'),
     bcryptRounds: int('BCRYPT_ROUNDS', isTest ? 4 : 10),
-    emailVerification: bool('EMAIL_VERIFICATION', true),
+    // one-time codes are delivered by the Telegram bot: on sign-up and, with LOGIN_CODE, on every sign-in
+    telegramVerification: bool('TELEGRAM_VERIFICATION', true),
+    loginCode: bool('LOGIN_CODE', true),
     exposeOtp: bool('DEV_EXPOSE_OTP', false),
     otpTtl: int('OTP_TTL', 15 * 60),
     otpResendCooldown: int('OTP_RESEND_COOLDOWN', 60),
     otpMaxAttempts: int('OTP_MAX_ATTEMPTS', 5),
-    turnstileSecret: optional('TURNSTILE_SECRET'),
-    turnstileSiteKey: optional('TURNSTILE_SITE_KEY'),
-    allowedEmailDomains: list('ALLOWED_EMAIL_DOMAINS').map((d) => d.toLowerCase()),
-    blockedEmailDomains: list('BLOCKED_EMAIL_DOMAINS').map((d) => d.toLowerCase()),
     qrTtl: int('QR_TTL', 90),
     qrRequireMobileApprover: bool('QR_REQUIRE_MOBILE_APPROVER', true),
     accountRestoreDays: int('ACCOUNT_RESTORE_DAYS', 30)
@@ -117,8 +115,13 @@ export const config = {
     dailyReward: int('EVENT_DAILY_REWARD', 20)
   },
 
+  telegram: {
+    // username of the bot that delivers codes (deploy/telegram-bot), shown in error messages
+    botUsername: str('TELEGRAM_BOT', 'openitd_bot').replace(/^@/, '')
+  },
+
   admin: {
-    email: optional('ADMIN_EMAIL'),
+    telegram: optional('ADMIN_TELEGRAM'),
     password: optional('ADMIN_PASSWORD'),
     username: str('ADMIN_USERNAME', 'admin')
   },

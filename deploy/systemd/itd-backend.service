@@ -1,0 +1,23 @@
+[Unit]
+Description=ITD backend (Bun + Elysia)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=itd
+Group=itd
+WorkingDirectory=/opt/itd-backend
+EnvironmentFile=/opt/itd-backend/.env
+# migrations and reference data (pins, changelog, admin from ADMIN_TELEGRAM) are idempotent
+ExecStartPre=/usr/local/bin/bun src/db/migrate.ts
+ExecStartPre=/usr/local/bin/bun src/db/seed.ts
+ExecStart=/usr/local/bin/bun src/index.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

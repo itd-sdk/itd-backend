@@ -36,7 +36,7 @@ def rest(method, path, body=None, token=None, headers=None):
         return json.loads(txt) if txt else None
 
 def make_account(name, avatar):
-    email = f'{name}-{RUN}@example.com'
+    email = f'{name}_{RUN}'  # Telegram username; the SDK sends it as `email`
     tok = rest('POST', '/v1/auth/sign-up', {'email': email, 'password': PASSWORD})['accessToken']
     rest('POST', '/users/profile', {'username': f'{name}{RUN}', 'displayName': name.title(), 'avatar': avatar}, tok)
     return email
@@ -49,7 +49,6 @@ carol, dave = client_for(a_email, 'carol'), client_for(b_email, 'dave')
 
 # ---- auth errors
 expect('InvalidCredentialsError', E.InvalidCredentialsError, lambda: sign_in(carol, a_email, 'wrong-password-1', 'turnstileToken', 'x'))
-expect('InvalidEmailError', E.InvalidEmailError, lambda: sign_in(carol, 'not-an-email', 'whatever12345', 'turnstileToken', 'x'))
 expect('SamePasswordError', E.SamePasswordError, lambda: carol.change_password(PASSWORD, PASSWORD))
 expect('InvalidOldPasswordError', E.InvalidOldPasswordError, lambda: carol.change_password('wrong-old-pass', 'new-password-123'))
 expect('InvalidPasswordError', E.InvalidPasswordError, lambda: carol.change_password(PASSWORD, 'short'))

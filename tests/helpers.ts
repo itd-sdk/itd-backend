@@ -3,7 +3,7 @@ import { createApp } from '../src/app'
 import { config } from '../src/config'
 import { db } from '../src/db/client'
 import { seedReferenceData } from '../src/db/seed'
-import { redis } from '../src/redis'
+import { redis, rk } from '../src/redis'
 
 export const app = createApp()
 
@@ -50,25 +50,39 @@ export async function resetState() {
   await seedReferenceData()
 }
 
-let userCounter = 0
-export type TestUser = { token: string; refresh: string; id: string; username: string; email: string; password: string; avatar: string }
+let chatCounter = 1000
+/** What the Telegram bot does on /start: remembers the chat of a username */
+export async function pressStart(telegram: string, chatId = String(++chatCounter)) {
+  await redis.hset(rk('tg', 'chats'), telegram.toLowerCase(), chatId)
+  return chatId
+}
 
-/** Registers (with OTP confirmation) and creates a profile */
+/** Messages queued for the bot */
+export async function botOutbox() {
+  const items = await redis.lrange(rk('tg', 'outbox'), 0, -1)
+  return items.map((item) => JSON.parse(item) as { chatId: string; text: string; expiresAt: number })
+}
+
+let userCounter = 0
+export type TestUser = { token: string; refresh: string; id: string; username: string; telegram: string; password: string; avatar: string }
+
+/** Registers (with a Telegram code) and creates a profile */
 export async function createUser(options: { name?: string; avatar?: string; userAgent?: string } = {}): Promise<TestUser> {
   userCounter++
   const name = options.name ?? `user${userCounter}${Math.random().toString(36).slice(2, 6)}`
-  const email = `${name}@example.com`
+  const telegram = name.toLowerCase()
   const password = 'correct-horse-battery'
   const headers = options.userAgent ? { 'user-agent': options.userAgent } : undefined
-  const signUp = await api('POST', '/v1/auth/sign-up', { body: { email, password }, headers })
+  await pressStart(telegram)
+  const signUp = await api('POST', '/v1/auth/sign-up', { body: { telegram, password }, headers })
   if (signUp.status !== 200) throw new Error(`sign-up failed: ${JSON.stringify(signUp.body)}`)
-  const verified = await api('POST', '/v1/auth/verify-otp', { body: { email, otp: signUp.body.otp, flowToken: signUp.body.flowToken }, headers })
+  const verified = await api('POST', '/v1/auth/verify-otp', { body: { telegram, otp: signUp.body.otp, flowToken: signUp.body.flowToken }, headers })
   if (verified.status !== 200) throw new Error(`verify failed: ${JSON.stringify(verified.body)}`)
   const token = verified.body.accessToken
   const avatar = options.avatar ?? '🐱'
   const profile = await api('POST', '/users/profile', { token, body: { username: name, displayName: name, avatar } })
   if (profile.status !== 201) throw new Error(`profile failed: ${JSON.stringify(profile.body)}`)
-  return { token, refresh: verified.cookies.refresh_token!, id: profile.body.id, username: name, email, password, avatar }
+  return { token, refresh: verified.cookies.refresh_token!, id: profile.body.id, username: name, telegram, password, avatar }
 }
 
 export async function createPost(user: TestUser, body: Record<string, unknown> | string) {

@@ -40,7 +40,7 @@ const FollowResult = t.Object({ following: t.Boolean(), status: t.String(), foll
 async function renderMe(userId: string) {
   const [record, [account]] = await Promise.all([loadUserRecord(userId), db.select().from(accounts).where(eq(accounts.id, userId)).limit(1)])
   if (!record || !account) throw notFound('Profile not found', 'PROFILE_NOT_FOUND')
-  return presentMe(record, { email: account.email, roles: account.roles })
+  return presentMe(record, { telegram: account.telegram, roles: account.roles })
 }
 
 async function assertUsernameAvailable(username: string, exceptUserId?: string) {

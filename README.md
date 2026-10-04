@@ -5,20 +5,15 @@ Backend-клон социальной сети [ИТД (итд.com)](https://xn-
 (и официальный веб-клиент), поэтому SDK работает с этим сервером без изменений — достаточно
 указать `ITDConfig(url='http://localhost:3000/api')`.
 
+Ветка **openitd** — версия для собственного сервера: вместо почты и капчи вход по нику в Telegram
+и паролю, одноразовые коды присылает Telegram-бот ([deploy/telegram-bot](deploy/telegram-bot/bot.py)),
+официальный веб-клиент собирается с нужными правками ([deploy/frontend](deploy/frontend/build.ts)).
+Развёртывание на сервере — [deploy/README.md](deploy/README.md).
+
 **Стек:** Bun · ElysiaJS (TypeScript) · TypeBox · PostgreSQL + Drizzle ORM · Redis (ioredis) ·
 Swagger/OpenAPI (`@elysiajs/swagger`) · `uuid` (v7) · `bcrypt`.
 
 ## Быстрый старт
-
-### Docker
-
-```bash
-JWT_SECRET=$(openssl rand -hex 32) ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=change-me-please docker compose up --build
-```
-
-API: <http://localhost:3000/api>, документация: <http://localhost:3000/swagger>.
-Контейнер сам применяет миграции и сид (пины, версии приложений, ченджлог, приветственное
-объявление, админ из `ADMIN_EMAIL`/`ADMIN_PASSWORD`).
 
 ### Локально
 
@@ -32,9 +27,10 @@ bun run db:seed
 bun run dev                     # http://localhost:3000
 ```
 
-В разработке письма не отправляются: одноразовые коды пишутся в лог, а при `DEV_EXPOSE_OTP=true`
-ещё и возвращаются в ответе (`otp`). Чтобы регистрироваться без кода, выставьте
-`EMAIL_VERIFICATION=false`.
+Коды подтверждения доставляет Telegram-бот (`deploy/telegram-bot`). Для разработки он не нужен:
+при `DEV_EXPOSE_OTP=true` код возвращается в ответе (`otp`) и пишется в лог; перед регистрацией
+«нажмите Старт» вручную — `redis-cli hset itd:tg:chats <ник> 1`. Чтобы регистрироваться и входить без
+кода, выставьте `TELEGRAM_VERIFICATION=false`.
 
 ### Пример с itd-sdk
 
@@ -43,16 +39,18 @@ from itd import ITDConfig, init_client, Me, Post
 from itd.core.auth import CredentialsAuth
 
 client = init_client('local', config=ITDConfig(url='http://localhost:3000/api'),
-                     auth=CredentialsAuth('me@example.com', 'my-password-123', 'captcha-not-required'))
+                     auth=CredentialsAuth('my_telegram_nick', 'my-password-123', 'captcha-not-required'))
 print(Me().username)
 Post.new('Привет из SDK #итд').like()
 ```
+
+SDK шлёт ник в поле `email`; вход без кода из бота работает при `LOGIN_CODE=false`.
 
 ## Возможности
 
 | Область | Что реализовано |
 |---|---|
-| Аутентификация | регистрация с подтверждением email кодом, вход, `refresh_token` в HttpOnly-cookie с ротацией и grace-окном, JWT access на 15 минут (`sid`, `sub`, `roles`, `iss: auth-service`), выход, выход везде, смена/сброс пароля, вход по QR (подтверждение только с мобильной сессии), список и отзыв сессий с разбором устройства |
+| Аутентификация | регистрация и вход по нику Telegram с кодом из бота (на каждый вход при `LOGIN_CODE=true`), `refresh_token` в HttpOnly-cookie с ротацией и grace-окном, JWT access на 15 минут (`sid`, `sub`, `roles`, `iss: auth-service`), выход, выход везде, смена/сброс пароля, вход по QR (подтверждение только с мобильной сессии), список и отзыв сессий с разбором устройства |
 | Профили | создание профиля после регистрации, emoji-аватар = клан, баннер, био, приватность (закрытый аккаунт, кто пишет на стене, кто видит лайки, last seen), онлайн/последний визит, пины (значки), удаление аккаунта с восстановлением в течение 30 дней |
 | Социальный граф | подписки (для закрытых аккаунтов — заявки с принятием/отклонением), блокировки, подписчики/подписки с пагинацией, статус подписки пачкой, топ кланов, рекомендации «кого читать» |
 | Посты | текст со спанами (bold/italic/…/link), автоматические хэштеги и упоминания, вложения, опросы, посты на чужой стене, репосты с комментарием, закреп, редактирование 48 часов, удаление с восстановлением, лайки, «доминирующее эмодзи» (клан, который чаще лайкал пост) |
@@ -72,11 +70,11 @@ Post.new('Привет из SDK #итд').like()
   `{"error": "Too Many Requests"}` или `RATE_LIMIT_EXCEEDED` с `retryAfter`;
 - в каждом посте есть `vs`-токен для отчётов о просмотрах.
 
-Проверено прогоном самого SDK (`tests/sdk`, 96 проверок: модели, списки, SSE, QR-вход, оплата,
+Проверено прогоном самого SDK (`tests/sdk`, 95 проверок: модели, списки, SSE, QR-вход, оплата,
 все основные классы исключений):
 
 ```bash
-EMAIL_VERIFICATION=false bun run dev &
+TELEGRAM_VERIFICATION=false bun run dev &
 ITD_API=http://localhost:3000/api bun run test:sdk
 ```
 
@@ -114,6 +112,7 @@ TypeBox-моделями: они валидируют и нормализуют 
 | `feed:popular:*` | версионированные снапшоты популярной ленты (курсор `<версия>.<смещение>`) |
 | `sess:revoked:*`, `sess:grace:*` | отозванные сессии (access-токены перестают работать сразу), grace-окно ротации refresh-токена |
 | `flow:*`, `qr:*` | одноразовые коды (хранятся только хэши) и состояния QR-входа |
+| `tg:chats`, `tg:usernames`, `tg:outbox` | связь ника Telegram с чатом (пишет бот по /start) и очередь сообщений с кодами для бота |
 | `ch:user:*`, `ch:qr:*` | pub/sub каналы для SSE уведомлений и статусов QR |
 | `lastseen:*`, `online:*` | присутствие: последний визит и открытые SSE-соединения |
 | `cache:*`, `lock:*` | кэш трендов и кланов, блокировки фоновых задач |
@@ -128,13 +127,14 @@ TypeBox-моделями: они валидируют и нормализуют 
 | `REDIS_URL` | `redis://localhost:6379` | Redis |
 | `JWT_SECRET` | — | обязателен при `NODE_ENV=production` |
 | `PUBLIC_URL` | `http://localhost:3000` | база для ссылок на файлы, QR и оплату |
-| `EMAIL_VERIFICATION` | `true` | регистрация с подтверждением кодом |
+| `TELEGRAM_VERIFICATION` | `true` | регистрация с кодом из Telegram-бота |
+| `LOGIN_CODE` | `true` | код из бота и при каждом входе |
+| `TELEGRAM_BOT` | `openitd_bot` | ник бота в сообщениях об ошибках |
 | `COOKIE_SECURE` | `true` в production | флаг `Secure` для `refresh_token` |
 | `CORS_ORIGINS` | — | разрешённые origin (в production без него CORS выключен) |
 | `TRUST_PROXY` | `false` | брать IP/страну из заголовков прокси |
 | `STORAGE_DRIVER` | `local` | `local` (раздача из `/uploads`) или `s3` |
 | `RATE_LIMIT_MULTIPLIER` | `1` | масштаб всех лимитов |
-| `TURNSTILE_SECRET` | — | включает проверку Cloudflare Turnstile |
 | `EVENT_ENABLED` | `false` | сезонный ивент |
 
 ## Тесты
@@ -144,7 +144,7 @@ createdb itd_test             # имя базы обязано заканчив�
 bun test                      # настройки берутся из .env.test
 ```
 
-71 интеграционный тест на настоящих PostgreSQL и Redis: OTP-регистрация, ротация и отзыв токенов,
+73 интеграционных теста на настоящих PostgreSQL и Redis: регистрация и вход с кодом из Telegram, ротация и отзыв токенов,
 сессии, QR-вход, профили и приватность, подписки и заявки, блокировки, посты, ленты и курсоры,
 закрепы, лайки и доминирующее эмодзи, репосты, редактирование и восстановление со счётчиками,
 опросы, комментарии, уведомления и SSE, файлы, жалобы, оплата и автопродление, верификация,
@@ -152,7 +152,6 @@ bun test                      # настройки берутся из .env.test
 
 ## Упрощения
 
-- письма (коды подтверждения) пишутся в лог — для продакшена подключите транспорт в `src/lib/mailer.ts`;
 - оплата «НУКСТА» тестовая: ссылка `confirmationUrl` ведёт на страницу-заглушку, которая подтверждает платёж;
 - модерации изображений нет; запрещённые слова — из `BANNED_WORDS` и таблицы `banned_words` (админка);
 - геолокация по IP — только код страны из `CF-IPCountry` при `TRUST_PROXY=true`;

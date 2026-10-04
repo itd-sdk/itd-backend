@@ -12,7 +12,7 @@ beforeAll(resetState)
 
 async function makeAdmin(user: TestUser) {
   await db.update(accounts).set({ roles: ['user', 'admin'] }).where(eq(accounts.id, user.id))
-  const signIn = await api('POST', '/v1/auth/sign-in', { body: { email: user.email, password: user.password } })
+  const signIn = await api('POST', '/v1/auth/sign-in', { body: { telegram: user.telegram, password: user.password } })
   return signIn.body.accessToken as string
 }
 
@@ -202,15 +202,15 @@ describe('verification, dwell, admin', () => {
     const ban = await api('POST', `/admin/users/${victim.username}/ban`, { token: admin, body: { reason: 'спам' } })
     expect(ban.body).toEqual({ success: true, revokedSessions: 1 })
     expect((await api('GET', '/users/me', { token: victim.token })).status).toBe(401)
-    const signIn = await api('POST', '/v1/auth/sign-in', { body: { email: victim.email, password: victim.password } })
+    const signIn = await api('POST', '/v1/auth/sign-in', { body: { telegram: victim.telegram, password: victim.password } })
     expect(signIn.body.error).toMatchObject({ code: 'ACCOUNT_BANNED', reason: 'спам' })
     expect((await api('GET', `/users/${victim.username}`)).body.error.message).toBe('Этот аккаунт заблокирован')
 
     await api('POST', `/admin/users/${victim.username}/ban`, { token: admin, body: { until: new Date(Date.now() + 3600_000).toISOString() } })
-    expect((await api('POST', '/v1/auth/sign-in', { body: { email: victim.email, password: victim.password } })).body.error.code).toBe('ACCOUNT_DEACTIVATED')
+    expect((await api('POST', '/v1/auth/sign-in', { body: { telegram: victim.telegram, password: victim.password } })).body.error.code).toBe('ACCOUNT_DEACTIVATED')
     await db.update(accounts).set({ bannedUntil: sql`now() - interval '1 second'` }).where(eq(accounts.id, victim.id))
     expect(await liftExpiredBans()).toBe(1)
-    expect((await api('POST', '/v1/auth/sign-in', { body: { email: victim.email, password: victim.password } })).status).toBe(200)
+    expect((await api('POST', '/v1/auth/sign-in', { body: { telegram: victim.telegram, password: victim.password } })).status).toBe(200)
     expect((await api('GET', `/users/${victim.username}`)).status).toBe(200)
   })
 })

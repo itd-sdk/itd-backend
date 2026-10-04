@@ -6,7 +6,7 @@ import { accounts, type Role, sessions, users } from '../../db/schema'
 import { ApiError, badRequest, unauthorized } from '../../lib/errors'
 import { randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
 import { signAccessToken } from '../../lib/jwt'
-import { mailer, otpMail } from '../../lib/mailer'
+import { normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
 import { addDays, iso } from '../../lib/time'
 import { parseUserAgent } from '../../lib/useragent'
 import { redis, rk } from '../../redis'
@@ -21,21 +21,6 @@ const REFRESH_GRACE_SECONDS = 30
 
 // ---------------------------------------------------------------- validation helpers
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
-
-export function normalizeEmail(email: string) {
-  return email.trim().toLowerCase()
-}
-
-export function assertEmailAllowed(email: string) {
-  if (email.length > 254 || !EMAIL_RE.test(email)) throw badRequest('Invalid email format', 'INVALID_EMAIL')
-  const domain = email.split('@')[1]!
-  const { allowedEmailDomains, blockedEmailDomains } = config.auth
-  if ((allowedEmailDomains.length && !allowedEmailDomains.includes(domain)) || blockedEmailDomains.includes(domain)) {
-    throw badRequest('Email domain is not allowed', 'ACCOUNT_EMAIL_DOMAIN_NOT_ALLOWED')
-  }
-}
-
 export function assertNotBanned(account: AccountRow) {
   if (!account.bannedAt) return
   if (account.bannedUntil && account.bannedUntil.getTime() <= Date.now()) return
@@ -45,8 +30,8 @@ export function assertNotBanned(account: AccountRow) {
   throw new ApiError(403, 'ACCOUNT_BANNED', 'Account has been deactivated', { reason: account.banReason })
 }
 
-export async function findAccountByEmail(email: string, executor: Executor = db) {
-  const [row] = await executor.select().from(accounts).where(eq(accounts.email, email)).limit(1)
+export async function findAccountByTelegram(telegram: string, executor: Executor = db) {
+  const [row] = await executor.select().from(accounts).where(eq(accounts.telegram, telegram)).limit(1)
   return row ?? null
 }
 
@@ -118,18 +103,21 @@ export async function refreshSession(refreshToken: string | undefined, ctx: Clie
 
   let nextToken: string | null = null
   if (rotate) {
-    nextToken = randomToken(48)
-    await db
+    // grace first, then a compare-and-swap: of two concurrent refreshes only one rotates, the other keeps its cookie
+    await redis.set(rk('sess', 'grace', hash), session.id, 'EX', REFRESH_GRACE_SECONDS)
+    const candidate = randomToken(48)
+    const rotated = await db
       .update(sessions)
       .set({
-        tokenHash: sha256(nextToken),
+        tokenHash: sha256(candidate),
         lastUsedAt: new Date(),
         expiresAt: addDays(new Date(), config.auth.refreshTokenTtlDays),
         ipAddress: ctx.ip,
         ipCountry: ctx.country ?? session.ipCountry
       })
-      .where(eq(sessions.id, session.id))
-    await redis.set(rk('sess', 'grace', hash), session.id, 'EX', REFRESH_GRACE_SECONDS)
+      .where(and(eq(sessions.id, session.id), eq(sessions.tokenHash, hash)))
+      .returning({ id: sessions.id })
+    if (rotated.length) nextToken = candidate
   }
   const { token: accessToken } = signAccessToken({ userId: account.id, sessionId: session.id, roles: account.roles })
   return { accessToken, refreshToken: nextToken, session, account }
@@ -226,7 +214,10 @@ export function readRefreshCookie(cookie: Cookies, body?: unknown) {
 export type FlowPurpose = 'signup' | 'login' | 'reset'
 export type Flow = {
   purpose: FlowPurpose
-  email: string
+  telegram: string
+  // where the code goes; null for password resets of unknown accounts (nothing is sent)
+  chatId: string | null
+  device: string | null
   accountId: string | null
   passwordHash: string | null
   otpHash: string
@@ -237,21 +228,21 @@ export type Flow = {
 
 const flowKey = (token: string) => rk('flow', token)
 
-export async function startFlow(input: Omit<Flow, 'otpHash' | 'attempts' | 'verified' | 'sentAt'>, send = true) {
+export async function startFlow(input: Omit<Flow, 'otpHash' | 'attempts' | 'verified' | 'sentAt'>) {
   const flowToken = randomToken(24)
   const otp = randomOtp()
   const flow: Flow = { ...input, otpHash: sha256(`${flowToken}:${otp}`), attempts: 0, verified: false, sentAt: Date.now() }
   await redis.set(flowKey(flowToken), JSON.stringify(flow), 'EX', config.auth.otpTtl)
-  if (send) await mailer.send(otpMail(input.email, otp, input.purpose))
+  if (input.chatId) await sendTelegram(input.chatId, otpMessage(otp, input.purpose, input.device), config.auth.otpTtl)
   return { flowToken, otp }
 }
 
-export async function loadFlow(flowToken: string | undefined, email?: string) {
+export async function loadFlow(flowToken: string | undefined, telegram?: string) {
   if (!flowToken) throw badRequest('Flow token is missing', 'INVALID_FLOW_TOKEN')
   const raw = await redis.get(flowKey(flowToken))
   if (!raw) throw badRequest('Session expired. Start again', 'INVALID_FLOW_TOKEN')
   const flow = JSON.parse(raw) as Flow
-  if (email !== undefined && normalizeEmail(email) !== flow.email) throw badRequest('Email does not match', 'INVALID_FLOW_TOKEN')
+  if (telegram && normalizeTelegram(telegram) !== flow.telegram) throw badRequest('Telegram does not match', 'INVALID_FLOW_TOKEN')
   return flow
 }
 
@@ -288,7 +279,7 @@ export async function resendOtp(flowToken: string, flow: Flow) {
   flow.attempts = 0
   flow.sentAt = Date.now()
   await saveFlow(flowToken, flow)
-  if (flow.accountId || flow.purpose === 'signup') await mailer.send(otpMail(flow.email, otp, flow.purpose))
+  if (flow.chatId) await sendTelegram(flow.chatId, otpMessage(otp, flow.purpose, flow.device), config.auth.otpTtl)
   return otp
 }
 
@@ -297,4 +288,12 @@ export const rolesOf = (account: Pick<AccountRow, 'roles'>): Role[] => (account.
 export function requireAccount<T>(value: T | null | undefined): T {
   if (!value) throw unauthorized('Account not found')
   return value
+}
+
+/** "Chrome · Windows 10, 203.0.113.7" for the code message */
+export function describeClient(ctx: ClientContext) {
+  const device = parseUserAgent(ctx.userAgent)
+  const os = device.osName === 'Unknown' ? null : [device.osName, device.osVersion].filter(Boolean).join(' ')
+  const name = [device.clientName, os].filter(Boolean).join(' · ')
+  return [name, ctx.ip].filter(Boolean).join(', ') || null
 }

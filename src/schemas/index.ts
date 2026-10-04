@@ -132,6 +132,7 @@ export const MeModel = t.Object({
   banner: Nullable(t.String()),
   bio: Nullable(t.String()),
   email: t.String(),
+  telegram: t.String(),
   roles: t.Array(t.String()),
   wallAccess: AccessTypeModel,
   likesVisibility: AccessTypeModel,
