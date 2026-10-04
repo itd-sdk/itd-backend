@@ -206,7 +206,8 @@ const bundle = new Map<string, string>()
 for (const file of bundleFiles) bundle.set(file, await readFile(join(ASSETS, file), 'utf8'))
 
 const staticRefs = new Set<string>()
-const staticRe = new RegExp(`/?assets/([A-Za-z0-9_.-]+\\.(?:${BINARY_EXT}))`, 'g')
+// "./assets/x.png" are import.meta.glob keys (source paths), not URLs: the hashed URL sits in a variable next to them
+const staticRe = new RegExp(`(?<![.\\w/])/?assets/([A-Za-z0-9_.-]+\\.(?:${BINARY_EXT}))`, 'g')
 for (const code of bundle.values()) for (const m of code.matchAll(staticRe)) staticRefs.add(m[1]!)
 const rootRefs = new Set<string>()
 for (const m of (html ?? '').matchAll(/(?:href|src|content)="\/(?!assets\/|\/)([^"?#]+\.[a-z0-9]+)"/gi)) rootRefs.add(m[1]!)
