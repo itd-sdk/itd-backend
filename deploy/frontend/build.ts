@@ -90,8 +90,11 @@ async function download(url: string): Promise<Buffer> {
       continue
     }
     if (res.status === 404) throw new NotFoundError(`HTTP 404 for ${url}`)
-    if (res.ok) return body
-    if (attempt >= 4 || ![403, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`HTTP ${res.status} for ${url}`)
+    // an anti-bot page served with 200 instead of the file would be saved as the asset itself
+    const htmlInsteadOfFile = res.ok && !isPage(url) && looksLikeHtml(body)
+    if (res.ok && !htmlInsteadOfFile) return body
+    if (attempt >= 4) throw new Error(htmlInsteadOfFile ? `got an HTML page instead of ${url}` : `HTTP ${res.status} for ${url}`)
+    if (!htmlInsteadOfFile && ![403, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`HTTP ${res.status} for ${url}`)
     await sleep(Number(res.headers.get('retry-after')) * 1000 || 1000 * 2 ** attempt)
   }
 }
@@ -99,11 +102,18 @@ async function download(url: string): Promise<Buffer> {
 /** A file kept from the previous build, so a rerun only downloads what is still missing */
 async function previous(relativePath: string) {
   try {
-    return await readFile(join(TARGET, relativePath))
+    const body = await readFile(join(TARGET, relativePath))
+    return looksLikeHtml(body) ? null : body
   } catch {
     return null
   }
 }
+
+function looksLikeHtml(body: Buffer) {
+  return /^\s*(<!doctype html|<html|<head|<body)/i.test(body.subarray(0, 512).toString())
+}
+
+const isPage = (url: string) => url.replace(/[?#].*$/, '').endsWith('/') || /\.html?$/.test(url)
 
 async function exists(path: string) {
   return stat(path).then(
