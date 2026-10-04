@@ -10,6 +10,7 @@
  *
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -333,6 +334,31 @@ if (unmatched.length) {
   throw new Error(`the bundle changed, these patches did not apply: ${unmatched.join('; ')}`)
 }
 
+// ---------------------------------------------------------------- 5b. cache-safe file names
+
+// /assets is served as immutable, but the patches change files under Vite's original names: a browser that cached
+// the original (or a previous build) would never load the new code. Every js/css name gets a suffix derived from
+// the final contents, and all references are rewritten.
+const renamed = new Map<string, string>()
+const assetFiles = (await readdir(ASSETS)).filter((f) => /\.(js|css)$/.test(f)).sort()
+const contents = new Map<string, string>()
+const digest = createHash('sha256')
+for (const file of assetFiles) {
+  const code = await readFile(join(ASSETS, file), 'utf8')
+  contents.set(file, code)
+  digest.update(file).update('\0').update(code).update('\0')
+}
+const buildTag = digest.digest('hex').slice(0, 8)
+for (const file of assetFiles) renamed.set(file, file.replace(/\.(js|css)$/, `.${buildTag}.$1`))
+const assetNames = new RegExp(`(?<![\\w.-])(${assetFiles.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\w-])`, 'g')
+const renameRefs = (text: string) => text.replace(assetNames, (name) => renamed.get(name)!)
+for (const [file, code] of contents) {
+  await writeFile(join(ASSETS, renamed.get(file)!), renameRefs(code))
+  await rm(join(ASSETS, file))
+}
+const sourceEntry = entry
+entry = renamed.get(entry)!
+
 // ---------------------------------------------------------------- 6. index.html
 
 const CAPTCHA_STUB =
@@ -354,7 +380,8 @@ let page =
   </body>
 </html>
 `
-if (html && liveEntry && liveEntry !== entry) page = page.replace(`/assets/${liveEntry}`, `/assets/${entry}`)
+if (html && liveEntry && liveEntry !== sourceEntry) page = page.replace(`/assets/${liveEntry}`, `/assets/${entry}`)
+page = renameRefs(page)
 
 const removed: string[] = []
 const TRACKERS = /metrika|yandex|gtag|googletagmanager|google-analytics|clarity/i

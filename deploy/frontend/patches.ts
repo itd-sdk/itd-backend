@@ -79,6 +79,14 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /return\}(\w+)\(void 0\)\},\1=\w+\(async \w+=>\{/
     },
     {
+      // icons were requested with cache:"force-cache" for 30 minutes, so a failed (404) response stuck in the
+      // browser and Ctrl+F5 did not help; revalidate instead (4 small requests, usually 304)
+      name: 'icons: revalidate the browser cache',
+      find: /([\w$]+)\?"no-cache":"force-cache"/g,
+      replace: () => '"no-cache"',
+      done: /const ([\w$]+)=[\w$]+\?"reload":"no-cache",[\w$]+=fetch\(/
+    },
+    {
       // a source patched for another bot
       name: 'bot username',
       find: new RegExp(`(t\\.me/|@)(?!${bot}\\b)\\w+_bot\\b(?=[" ])`, 'g'),

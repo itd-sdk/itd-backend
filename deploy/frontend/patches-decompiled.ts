@@ -66,6 +66,12 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
       done: /(\w+)\(undefined\);\n\s*\};\n\n\s*const \1 = /
     },
     {
+      name: 'icons: revalidate the browser cache',
+      find: /([\w$]+) \? "no-cache" : "force-cache"/g,
+      replace: () => '"no-cache"',
+      done: /\? "reload"\s*: "no-cache"[,;]/
+    },
+    {
       name: 'bot username',
       find: new RegExp(`(t\\.me/|@)(?!${bot}\\b)\\w+_bot\\b(?=[" ])`, 'g'),
       replace: (_, prefix) => `${prefix}${bot}`,
