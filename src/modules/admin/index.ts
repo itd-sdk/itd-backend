@@ -275,6 +275,16 @@ export const adminModule = new Elysia({ prefix: '/admin', tags: ['Admin'] })
     }
   )
 
+  .delete(
+    '/changelog/:version',
+    async ({ params }) => {
+      const removed = await db.delete(changelog).where(eq(changelog.version, decodeURIComponent(params.version))).returning()
+      if (!removed.length) throw notFound('Changelog entry not found')
+      return { success: true }
+    },
+    { admin: true, response: SuccessModel }
+  )
+
   .post(
     '/announcements',
     async ({ body }) => {

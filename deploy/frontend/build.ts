@@ -532,7 +532,7 @@ if (args.icon) {
   page = page.replace(/<link\b[^>]*\brel="(?:shortcut icon|icon|apple-touch-icon(?:-precomposed)?|mask-icon)"[^>]*>\s*/gi, '')
   page = page.replace(/<\/head>/i, `  <link rel="icon" type="${type}" href="${iconPath}">\n  <link rel="apple-touch-icon" href="${iconPath}">\n  </head>`)
 }
-// style fixes, linked last so they win over the client's own styles
+// style fixes, placed last so they win over the client's own styles
 let cssPath: string | null = null
 if (args.css && (await exists(resolve(args.css)))) {
   const css = await readFile(resolve(args.css))
@@ -541,9 +541,10 @@ if (args.css && (await exists(resolve(args.css)))) {
   const classes = new Set([...css.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([A-Za-z][\w-]*)/g)].map((m) => m[1]!))
   const stale = [...classes].filter((name) => !bundleText.includes(`"${name}"`) && !bundleText.includes(`.${name}`))
   if (stale.length) warn(`${args.css}: classes not found in this bundle, those fixes no longer apply: ${stale.map((c) => '.' + c).join(', ')}`)
-  cssPath = `/assets/overrides.${createHash('sha256').update(css).digest('hex').slice(0, 8)}.css`
-  await writeFile(join(OUT, cssPath), css)
-  page = page.replace(/<\/head>/i, `  <link rel="stylesheet" href="${cssPath}">\n  </head>`)
+  // inlined: a separate file could arrive after the first render and the broken styles would flash
+  cssPath = resolve(args.css)
+  const inline = css.toString('utf8').replace(/<\/style/gi, '<\\/style')
+  page = page.replace(/<\/head>/i, () => `  <style id="openitd-overrides">\n${inline}\n</style>\n  </head>`)
 } else if (args.css && args.css !== join(import.meta.dir, 'overrides.css')) {
   throw new Error(`--css file not found: ${args.css}`)
 }

@@ -113,6 +113,18 @@ describe('files, reports, platform', () => {
     expect((await api('GET', '/platform/changelog')).body.data[0]).toMatchObject({ version: '1.2.0', date: '13 мая' })
     expect((await api('GET', '/platform/announcements')).body.announcements[0]).toMatchObject({ id: 'welcome', buttons: [{ action: { type: 'dismiss' } }] })
   })
+
+  test('changelog edited by an admin', async () => {
+    const admin = await makeAdmin(await createUser())
+    const entry = { version: '9.9.9', changes: ['Первая правка'] }
+    expect((await api('POST', '/admin/changelog', { token: admin, body: entry })).status).toBe(200)
+    await api('POST', '/admin/changelog', { token: admin, body: { ...entry, date: '1 января', changes: ['Исправлено'] } })
+    const listed = (await api('GET', '/platform/changelog')).body.data.find((e: { version: string }) => e.version === '9.9.9')
+    expect(listed).toMatchObject({ date: '1 января', changes: ['Исправлено'] })
+    expect((await api('DELETE', '/admin/changelog/9.9.9', { token: admin })).status).toBe(200)
+    expect((await api('DELETE', '/admin/changelog/9.9.9', { token: admin })).status).toBe(404)
+    expect((await api('GET', '/platform/changelog')).body.data.some((e: { version: string }) => e.version === '9.9.9')).toBe(false)
+  })
 })
 
 describe('verification, dwell, admin', () => {
