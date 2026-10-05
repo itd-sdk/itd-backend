@@ -125,6 +125,18 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /const ([\w$]+)=[\w$]+\?"reload":"no-cache",[\w$]+=fetch\(/
     },
     {
+      // banners could only be drawn: a picture from disk goes through the same save as a drawn one (data URL)
+      name: 'profile: upload a banner picture',
+      find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
+      replace: (_, drawButton, h, buttonClass, rest, save) =>
+        `${drawButton},${h}("label",{className:${buttonClass},title:"Загрузить баннер",style:{cursor:"pointer"},children:[` +
+        `${h}("svg",{width:20,height:20,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",children:[` +
+        `${h}("path",{d:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}),${h}("path",{d:"M17 8l-5-5-5 5"}),${h}("path",{d:"M12 3v12"})]}),` +
+        `${h}("input",{type:"file",accept:"image/*",style:{display:"none"},onChange:ev=>{const f=ev.target.files&&ev.target.files[0];ev.target.value="";` +
+        `if(!f)return;const r=new FileReader;r.onload=()=>{Promise.resolve(${save}(r.result)).catch(()=>{})};r.readAsDataURL(f)}})]})${rest}`,
+      done: /title:"Загрузить баннер"/
+    },
+    {
       // a source patched for another bot
       name: 'bot username',
       find: new RegExp(`(t\\.me/|@)(?!${bot}\\b)\\w+_bot\\b(?=[" ])`, 'g'),

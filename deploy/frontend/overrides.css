@@ -12,10 +12,12 @@ span[data-icon="liked"] + span {
   color: var(--accent-like);
 }
 
-/* notifications: icons in the round type badge are solid black (liked.svg brings its own red fill, the badge
+/* notifications (the list .pjaO and the pop-up .skU2): icons in the round type badge are solid black (liked.svg brings its own red fill, the badge
    is red too; comment.svg is an outline only) */
 .pjaO [data-icon] svg,
-.pjaO [data-icon] svg * {
+.pjaO [data-icon] svg *,
+.skU2 [data-icon] svg,
+.skU2 [data-icon] svg * {
   fill: #000 !important;
   stroke: #000 !important;
 }
