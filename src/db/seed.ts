@@ -4,7 +4,7 @@ import { hashPassword } from '../lib/password'
 import { normalizeTelegram } from '../lib/telegram'
 import { closeRedis } from '../redis'
 import { closeDb, db } from './client'
-import { accounts, announcements, appVersions, changelog, notificationSettings, pins, userPins, users } from './schema'
+import { accounts, announcements, appVersions, notificationSettings, pins, userPins, users } from './schema'
 
 const PINS = [
   { slug: 'early', name: 'Первопроходец', description: 'Один из первых пользователей ИТД' },
@@ -18,11 +18,6 @@ const APPS = [
   { name: 'ios', minVersion: '1.0.0', latestVersion: '1.4.0', updateUrl: 'https://xn--d1ah4a.com/app/ios' }
 ]
 
-const CHANGELOG = [
-  { version: '1.2.0', date: '13 мая', changes: ['Опросы в постах', 'Закреплённые посты', 'Новые настройки приватности'] },
-  { version: '1.1.0', date: '2 апреля', changes: ['Репосты с комментарием', 'Поиск по хэштегам'] },
-  { version: '1.0.0', date: '1 марта', changes: ['Первый релиз'] }
-]
 
 export async function seedReferenceData() {
   for (const pin of PINS) {
@@ -33,12 +28,6 @@ export async function seedReferenceData() {
       .onConflictDoUpdate({ target: pins.slug, set: { url: sql`coalesce(${pins.url}, excluded.url)` } })
   }
   for (const app of APPS) await db.insert(appVersions).values(app).onConflictDoNothing()
-  for (const [index, entry] of CHANGELOG.entries()) {
-    await db
-      .insert(changelog)
-      .values({ ...entry, createdAt: new Date(Date.now() - index * 86400_000) })
-      .onConflictDoNothing()
-  }
   await db
     .insert(announcements)
     .values({

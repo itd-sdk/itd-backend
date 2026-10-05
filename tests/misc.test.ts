@@ -110,7 +110,8 @@ describe('files, reports, platform', () => {
 
   test('platform content', async () => {
     expect((await api('GET', '/platform/version')).body.android).toMatchObject({ minVersion: '1.0.0', latestVersion: '1.4.2' })
-    expect((await api('GET', '/platform/changelog')).body.data[0]).toMatchObject({ version: '1.2.0', date: '13 мая' })
+    // the changelog starts empty: no demo entries
+    expect((await api('GET', '/platform/changelog')).body.data).toEqual([])
     expect((await api('GET', '/platform/announcements')).body.announcements[0]).toMatchObject({ id: 'welcome', buttons: [{ action: { type: 'dismiss' } }] })
   })
 
@@ -124,6 +125,10 @@ describe('files, reports, platform', () => {
     expect((await api('DELETE', '/admin/changelog/9.9.9', { token: admin })).status).toBe(200)
     expect((await api('DELETE', '/admin/changelog/9.9.9', { token: admin })).status).toBe(404)
     expect((await api('GET', '/platform/changelog')).body.data.some((e: { version: string }) => e.version === '9.9.9')).toBe(false)
+
+    // highest version first, whatever the order they were added in
+    for (const version of ['0.10.0', '0.2.0', '0.9.1']) await api('POST', '/admin/changelog', { token: admin, body: { version, changes: ['x'] } })
+    expect((await api('GET', '/platform/changelog')).body.data.map((e: { version: string }) => e.version)).toEqual(['0.10.0', '0.9.1', '0.2.0'])
   })
 })
 

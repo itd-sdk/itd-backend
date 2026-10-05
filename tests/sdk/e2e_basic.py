@@ -132,7 +132,7 @@ check('who to follow', isinstance(list(WhoToFollow(alice)), list))
 r = p_alice.report(ReportReason.SPAM, 'test')
 check('report', r.id is not None)
 
-check('changelog', len(Changelog(alice)) >= 1)
+check('changelog', isinstance(list(Changelog(alice)), list))
 check('apps', 'android' in Apps(alice))
 check('announcements', isinstance(list(Announcements(hide_seen=False, client=alice)), list))
 check('portal', Portal(client=alice).title)
