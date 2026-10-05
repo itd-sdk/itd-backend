@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db, type Executor } from '../db/client'
-import { type NotificationType, notificationSettings, notifications } from '../db/schema'
+import { follows, type NotificationType, notificationSettings, notifications } from '../db/schema'
 import { errorMeta, logger } from '../lib/logger'
 import { truncate } from '../lib/text'
 import { iso } from '../lib/time'
@@ -60,7 +60,9 @@ export type NotifyInput = {
   dedupeKey?: string | null
 }
 
-export function presentNotification(row: NotificationRow, actor: UserBrief | null) {
+type NotificationActor = UserBrief & { isFollowing: boolean; isFollowedBy: boolean }
+
+export function presentNotification(row: NotificationRow, actor: NotificationActor | null) {
   return {
     id: row.id,
     type: row.type,
@@ -82,8 +84,31 @@ export function presentNotification(row: NotificationRow, actor: UserBrief | nul
 }
 
 export async function presentNotifications(rows: NotificationRow[]) {
-  const { briefs } = await loadBriefs(rows.map((row) => row.actorId).filter((id): id is string => !!id))
-  return rows.map((row) => presentNotification(row, row.actorId ? (briefs.get(row.actorId) ?? null) : null))
+  const actorIds = [...new Set(rows.map((row) => row.actorId).filter((id): id is string => !!id))]
+  const recipientIds = [...new Set(rows.map((row) => row.recipientId))]
+  const { briefs } = await loadBriefs(actorIds)
+  // the client hides "Подписаться в ответ" when the recipient already follows the actor
+  const edges = actorIds.length
+    ? await db
+        .select({ followerId: follows.followerId, followingId: follows.followingId })
+        .from(follows)
+        .where(
+          or(
+            and(inArray(follows.followerId, recipientIds), inArray(follows.followingId, actorIds)),
+            and(inArray(follows.followerId, actorIds), inArray(follows.followingId, recipientIds))
+          )
+        )
+    : []
+  const edge = new Set(edges.map((e) => `${e.followerId}:${e.followingId}`))
+  return rows.map((row) => {
+    const brief = row.actorId ? briefs.get(row.actorId) : undefined
+    if (!brief) return presentNotification(row, null)
+    return presentNotification(row, {
+      ...brief,
+      isFollowing: edge.has(`${row.recipientId}:${brief.id}`),
+      isFollowedBy: edge.has(`${brief.id}:${row.recipientId}`)
+    })
+  })
 }
 
 /**

@@ -307,7 +307,7 @@ export const NotificationModel = t.Object({
   read: t.Boolean(),
   readAt: Nullable(DateTime),
   createdAt: DateTime,
-  actor: Nullable(UserBriefModel)
+  actor: Nullable(t.Object({ ...userBriefFields, isFollowing: t.Boolean(), isFollowedBy: t.Boolean() }))
 })
 
 export const NotificationSettingsModel = t.Object({

@@ -8,7 +8,7 @@
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
  * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn,
  * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon,
- * --version <x.y.z> (or SITE_VERSION): the version shown next to the logo (built into the bundle),
+ * --version <x.y.z> (or SITE_VERSION): the version next to the logo until the changelog loads (it shows the newest entry),
  * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles,
  * --mirror-event: download the site's own event app instead of the stub from deploy/frontend/event-app.
  *
@@ -427,15 +427,14 @@ if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirro
 const BOT = args['telegram-bot']!.trim().replace(/^@/, '')
 const PATCHES = openitdPatches(BOT)
 const VERSION = args.version!.trim().replace(/^v/i, '')
-if (VERSION) {
-  // the label is a literal in the bundle: v + the release the client was built as
-  PATCHES.push({
-    name: 'version next to the logo',
-    find: /(title:"Что нового",children:\["v",)"[^"]*"/g,
-    replace: (_, head) => `${head}${JSON.stringify(VERSION)}`,
-    done: /title:"Что нового",children:\["v",/
-  })
-}
+// the label is a literal in the bundle (the release the client was built as): read it from the page instead,
+// VERSION_SCRIPT in index.html fills it from the newest changelog entry
+PATCHES.push({
+  name: 'version next to the logo',
+  find: /(title:"Что нового",children:\["v",)("[^"]*")\]/g,
+  replace: (_, head, original) => `${head}globalThis.__openitdVersion||${VERSION ? JSON.stringify(VERSION) : original}]`,
+  done: /title:"Что нового",children:\["v",globalThis\.__openitdVersion\|\|/
+})
 
 const stats = { sentry: 0, cdn: 0, telegram: {} as Record<string, number> }
 for (const [file, original] of bundle) {
@@ -583,6 +582,16 @@ const EVENT_GUARD =
   "if(!/\\/index\\.html$/.test(location.pathname)){location.replace(m[0]+'index.html'+location.search);return}" +
   "document.documentElement.innerHTML='<body style=\"font:15px system-ui,sans-serif;padding:24px;color:#888\">Страница ивента не установлена: пересоберите веб-клиент и скопируйте его на сервер целиком (папка <code>public/events</code>).</body>'})()</script>"
 page = page.replace(/<head>/i, `<head>\n    ${EVENT_GUARD}`)
+// version next to the logo = newest changelog entry; cached so the next load shows it at once. The button's text
+// node is updated in place: React keeps that node and writes the same value on its next render
+const VERSION_SCRIPT = `<script>(function(){var K='openitd:version';try{window.__openitdVersion=localStorage.getItem(K)||''}catch(e){}
+fetch('/api/platform/changelog').then(function(r){return r.ok?r.json():null}).then(function(d){
+var v=d&&d.data&&d.data[0]&&String(d.data[0].version||'').replace(/^v/i,'');if(!v)return;
+window.__openitdVersion=v;try{localStorage.setItem(K,v)}catch(e){}
+var b=document.querySelector('button[title="Что нового"]');if(!b)return;
+for(var i=0;i<b.childNodes.length;i++){var n=b.childNodes[i];if(n.nodeType===3&&n.nodeValue!=='v'&&n.nodeValue!==v)n.nodeValue=v}
+}).catch(function(){})})()</script>`
+page = page.replace(/<\/head>/i, () => `  ${VERSION_SCRIPT}\n  </head>`)
 await writeFile(join(OUT, 'index.html'), page)
 
 // ---------------------------------------------------------------- 7. report

@@ -105,6 +105,10 @@ describe('notifications', () => {
     expect(list.body.notifications[0]).toMatchObject({ type: 'like', targetType: 'post', targetId: post.id, read: false, preview: 'пост', actor: { id: actor.id } })
     const all = await api('GET', '/notifications', { token: target.token })
     expect(all.body.notifications.map((n: any) => n.type)).toEqual(['like', 'follow'])
+    expect(all.body.notifications[1].actor).toMatchObject({ isFollowing: false, isFollowedBy: true })
+    await api('POST', `/users/${actor.id}/follow`, { token: target.token })
+    const followedBack = await api('GET', '/notifications', { token: target.token })
+    expect(followedBack.body.notifications.find((n: any) => n.type === 'follow').actor).toMatchObject({ isFollowing: true, isFollowedBy: true })
     expect((await api('GET', '/notifications/count', { token: target.token })).body).toEqual({ count: 2 })
 
     expect((await api('POST', '/notifications/read-batch', { token: target.token, body: { ids: [list.body.notifications[0].id] } })).body).toEqual({ success: true, count: 1 })
