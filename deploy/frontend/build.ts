@@ -254,7 +254,7 @@ for (const file of bundleFiles) bundle.set(file, await readFile(join(ASSETS, fil
 
 const staticRefs = new Set<string>()
 // "./assets/x.png" are import.meta.glob keys (source paths), not URLs: the hashed URL sits in a variable next to them
-const staticRe = new RegExp(`(?<![.\\w/])/?assets/([A-Za-z0-9_.-]+\\.(?:${BINARY_EXT}))`, 'g')
+const staticRe = new RegExp(`(?<![.\\w/])/?assets/((?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.(?:${BINARY_EXT}))`, 'g')
 for (const code of bundle.values()) for (const m of code.matchAll(staticRe)) staticRefs.add(m[1]!)
 const rootRefs = new Set<string>()
 for (const m of (html ?? '').matchAll(/(?:href|src|content)="\/(?!assets\/|\/)([^"?#]+\.[a-z0-9]+)"/gi)) rootRefs.add(m[1]!)
@@ -266,7 +266,10 @@ if (args.offline) {
 } else {
   for (const name of staticRefs) {
     try {
-      await writeFile(join(ASSETS, name), (await previous(`assets/${name}`)) ?? (await download(`${ORIGIN}/assets/${name}`)))
+      const body = (await previous(`assets/${name}`)) ?? (await download(`${ORIGIN}/assets/${name}`))
+      // a few live in subfolders (assets/portal/…: the event tab icon)
+      await mkdir(dirname(join(ASSETS, name)), { recursive: true })
+      await writeFile(join(ASSETS, name), body)
     } catch (error) {
       missingStatic++
       ;(error instanceof NotFoundError ? missing.notOnSite : missing.static).push(name)
@@ -559,6 +562,12 @@ if (title || iconPath) {
   }
 }
 page = page.replace(/<\/head>/i, `  ${CAPTCHA_STUB}\n  </head>`)
+// served for /public/events/… only when the event app is missing: without this the whole site would load again
+// inside the event frame and redirect forever
+const EVENT_GUARD =
+  '<script>if(location.pathname.indexOf("/public/events/")===0){window.stop();document.documentElement.innerHTML=' +
+  "'<body style=\"font:15px system-ui,sans-serif;padding:24px;color:#888\">Страница ивента не установлена: пересоберите веб-клиент и проверьте блок <code>location ~ ^/public/events/</code> в конфиге nginx.</body>'}</script>"
+page = page.replace(/<head>/i, `<head>\n    ${EVENT_GUARD}`)
 await writeFile(join(OUT, 'index.html'), page)
 
 // ---------------------------------------------------------------- 7. report
