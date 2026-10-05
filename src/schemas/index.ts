@@ -100,8 +100,6 @@ export const UserProfileModel = t.Object({
   bio: Nullable(t.String()),
   isFollowing: t.Boolean(),
   isFollowedBy: t.Boolean(),
-  hasOutgoingRequest: t.Boolean(),
-  hasIncomingRequest: t.Boolean(),
   isBlockedByMe: t.Boolean(),
   isBlockedByThem: t.Boolean(),
   blockedAt: Nullable(DateTime),
@@ -112,8 +110,6 @@ export const UserProfileModel = t.Object({
   likesVisibility: Nullable(AccessTypeModel),
   isPrivate: Nullable(t.Boolean()),
   canMessage: t.Boolean(),
-  canPostOnWall: t.Boolean(),
-  canSeeLikes: t.Boolean(),
   lastSeen: Nullable(LastSeenModel),
   online: t.Boolean(),
   pinnedPostId: Nullable(Uuid),
@@ -227,7 +223,9 @@ const postFields = {
   isPinned: t.Boolean(),
   dominantEmoji: Nullable(t.String()),
   notebook: Nullable(t.Object({ style: t.String() })),
-  revision: t.String({ description: 'Content hash for red pens and correctors' }),
+  // red pen / corrector state of the post (as /red-pens/state and /correctors/state), null without the event
+  corrector: Nullable(t.Any()),
+  redPen: Nullable(t.Any()),
   wallRecipientId: Nullable(Uuid),
   wallRecipient: Nullable(UserBriefModel),
   vs: t.String({ description: 'View session token for /v1/i dwell reports' })

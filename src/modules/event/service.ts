@@ -441,7 +441,7 @@ export async function toolInventory(userId: string, tool: Tool) {
   return { data: { events: [{ id: config.event.id, balance: tool === 'red_pen' ? wallet.redPens : wallet.correctors, endsAt: eventEndsAt().toISOString() }] } }
 }
 
-export async function toolState(viewerId: string, tool: Tool, postIds: string[]) {
+export async function toolState(viewerId: string | null, tool: Tool, postIds: string[]) {
   const unique = [...new Set(postIds)].slice(0, 100)
   if (unique.length === 0) return { data: {}, serverTime: new Date().toISOString() }
   const [postRows, marks] = await Promise.all([

@@ -299,7 +299,8 @@ describe('event items (free stub shop)', () => {
     const post = await api('POST', '/posts', { token: owner.token, body: { content: 'тетрадь', notebook: { eventId: 'aliceai', style: 'grid', operationId: crypto.randomUUID() } } })
     expect(post.status).toBe(201)
     expect(post.body.notebook).toEqual({ style: 'grid' })
-    expect(post.body.revision).toMatch(/^[0-9a-f]{16}$/)
+    expect(post.body.redPen.revision).toMatch(/^[0-9a-f]{16}$/)
+    expect(post.body).not.toHaveProperty('revision')
     expect((await api('GET', '/post-notebooks/inventory', { token: owner.token })).body.data.balance.grid).toBe(0)
 
     await free(guest, 'sticker', 1)
@@ -321,7 +322,7 @@ describe('event items (free stub shop)', () => {
     expect((await api('POST', `/v1/aliceai/profiles/${owner.id}/cushion/claim`, { token: owner.token })).body.show).toBe(false)
 
     const corrector = (await api('GET', `/correctors/state?ids=${post.body.id}`, { token: guest.token })).body.data[post.body.id]
-    expect(corrector).toMatchObject({ revision: post.body.revision, serverTime: expect.any(String), events: [{ id: 'aliceai', used: 0 }] })
+    expect(corrector).toMatchObject({ revision: post.body.redPen.revision, serverTime: expect.any(String), events: [{ id: 'aliceai', used: 0 }] })
   })
 })
 
@@ -404,5 +405,27 @@ describe('event', () => {
     )
     expect((await api('POST', '/red-pens/cancel', { token: author.token, body: { postId: post.id, claimId: applied.body.claimId } })).body.success).toBe(true)
     expect((await api('GET', `/red-pens/state?ids=${post.id}`, { token: author.token })).body.data[post.id].claims).toHaveLength(0)
+  })
+
+  test('posts carry their red pen and corrector state', async () => {
+    const author = await createUser()
+    const editor = await createUser()
+    const post = await createPost(author, 'превет мир')
+    await db.execute(sql`insert into event_wallets (user_id, red_pens, correctors) values (${editor.id}, 1, 1)`)
+    const fresh = (await api('GET', `/posts/${post.id}`, { token: editor.token })).body.data
+    // read before toMatchObject: its asymmetric matchers get written into the received object
+    const revision = fresh.redPen.revision
+    expect(revision).toMatch(/^[0-9a-f]{16}$/)
+    expect(fresh.redPen).toMatchObject({ claims: [], corrections: [], events: [{ id: 'aliceai' }] })
+    expect(fresh.corrector).toMatchObject({ revision, marks: [], events: [{ id: 'aliceai', used: 0 }] })
+
+    await api('POST', '/red-pens/apply', { token: editor.token, body: { postId: post.id, revision, start: 0, end: 6, replacement: 'привет' } })
+    await api('POST', '/correctors/apply', { token: editor.token, body: { postId: post.id, revision, start: 7, end: 10 } })
+    const marked = (await api('GET', `/posts/user/${author.username}`, { token: author.token })).body.data.posts[0]
+    expect(marked.redPen.corrections).toMatchObject([{ start: 0, end: 6, replacement: 'привет' }])
+    expect(marked.redPen.claims[0]).toMatchObject({ isOwner: false, actor: { id: editor.id } })
+    expect(marked.corrector.marks[0]).toMatchObject({ start: 7, end: 10, eventId: 'aliceai', actor: { id: editor.id } })
+    // anonymous viewers see the marks too
+    expect((await api('GET', `/posts/${post.id}`)).body.data.corrector.marks).toHaveLength(1)
   })
 })

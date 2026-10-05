@@ -58,7 +58,7 @@ describe('profiles & privacy', () => {
     expect(byName.body.id).toBe(alice.id)
     expect(byId.body.username).toBe(alice.username)
     expect(byAt.body.id).toBe(alice.id)
-    expect(byName.body).toMatchObject({ isFollowing: false, isBlockedByMe: false, canPostOnWall: true, wallAccess: 'everyone', online: true })
+    expect(byName.body).toMatchObject({ isFollowing: false, isBlockedByMe: false, wallAccess: 'everyone', online: true })
 
     const updated = await api('PUT', '/users/me', { token: alice.token, body: { bio: 'Привет!', displayName: 'Алиса', avatar: '🐺' } })
     expect(updated.body).toMatchObject({ bio: 'Привет!', displayName: 'Алиса', clanAvatar: '🐺' })
@@ -73,7 +73,9 @@ describe('profiles & privacy', () => {
     const updated = await api('PUT', '/users/me/privacy', { token: alice.token, body: { whoCanPostOnWall: 'followers', likesVisibility: 'nobody', showLastSeen: false } })
     expect(updated.body).toEqual({ isPrivate: false, wallAccess: 'followers', likesVisibility: 'nobody', messageAccess: 'everyone', showLastSeen: false })
     const seen = await api('GET', `/users/${alice.username}`, { token: bob.token })
-    expect(seen.body).toMatchObject({ lastSeen: null, online: false, canPostOnWall: false, canSeeLikes: false })
+    expect(seen.body).toMatchObject({ lastSeen: null, online: false, wallAccess: 'followers', likesVisibility: 'nobody' })
+    // fields the official API does not have
+    for (const field of ['canPostOnWall', 'canSeeLikes', 'hasOutgoingRequest', 'hasIncomingRequest']) expect(seen.body).not.toHaveProperty(field)
     expect((await api('PUT', '/users/me/privacy', { token: alice.token, body: { wallAccess: 'sometimes' } })).status).toBe(422)
   })
 })
@@ -110,7 +112,6 @@ describe('follows', () => {
     expect((await api('GET', `/posts/user/${owner.username}`, { token: fan.token })).body.error.code).toBe('PRIVATE_ACCOUNT')
     const request = await api('POST', `/users/${owner.username}/follow`, { token: fan.token })
     expect(request.body).toMatchObject({ following: false, status: 'requested' })
-    expect((await api('GET', `/users/${owner.username}`, { token: fan.token })).body.hasOutgoingRequest).toBe(true)
 
     const pending = await api('GET', '/users/me/follow-requests', { token: owner.token })
     expect(pending.body.data.users.map((u: any) => u.id)).toEqual([fan.id])
