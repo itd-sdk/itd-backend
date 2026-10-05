@@ -1,0 +1,13 @@
+/* Style fixes for the web client, linked after its own styles (deploy/frontend/build.ts, --css).
+   Class names are CSS-module hashes of this bundle: check them again after updating itd-frontend. */
+
+/* notifications: verified badge and pin stay on the same line as the name */
+.CmY2.pGqd {
+  display: flex;
+  flex-direction: row;
+}
+
+/* notifications: the like icon was drawn in the background color */
+span[data-icon="liked"] + span {
+  color: var(--accent-like);
+}

@@ -7,7 +7,8 @@
  *
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
  * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn,
- * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon.
+ * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon,
+ * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles.
  *
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
@@ -26,6 +27,7 @@ const { values: args } = parseArgs({
     'telegram-bot': { type: 'string', default: process.env.TELEGRAM_BOT ?? 'openitd_bot' },
     title: { type: 'string', default: process.env.SITE_TITLE ?? '' },
     icon: { type: 'string', default: process.env.SITE_ICON ?? '' },
+    css: { type: 'string', default: process.env.SITE_CSS ?? join(import.meta.dir, 'overrides.css') },
     offline: { type: 'boolean', default: false },
     'keep-cdn': { type: 'boolean', default: false }
   }
@@ -517,6 +519,16 @@ if (args.icon) {
   page = page.replace(/<link\b[^>]*\brel="(?:shortcut icon|icon|apple-touch-icon(?:-precomposed)?|mask-icon)"[^>]*>\s*/gi, '')
   page = page.replace(/<\/head>/i, `  <link rel="icon" type="${type}" href="${iconPath}">\n  <link rel="apple-touch-icon" href="${iconPath}">\n  </head>`)
 }
+// style fixes, linked last so they win over the client's own styles
+let cssPath: string | null = null
+if (args.css && (await exists(resolve(args.css)))) {
+  const css = await readFile(resolve(args.css))
+  cssPath = `/assets/overrides.${createHash('sha256').update(css).digest('hex').slice(0, 8)}.css`
+  await writeFile(join(OUT, cssPath), css)
+  page = page.replace(/<\/head>/i, `  <link rel="stylesheet" href="${cssPath}">\n  </head>`)
+} else if (args.css && args.css !== join(import.meta.dir, 'overrides.css')) {
+  throw new Error(`--css file not found: ${args.css}`)
+}
 // installed-app name and icon
 if (title || iconPath) {
   for (const file of await readdir(OUT)) {
@@ -544,6 +556,7 @@ const info = {
   telegramBot: BOT,
   title: title || null,
   icon: iconPath,
+  css: cssPath,
   patches: stats,
   cdnMirrored: mirrored,
   removedScripts: removed,
