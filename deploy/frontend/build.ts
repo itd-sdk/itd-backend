@@ -523,6 +523,11 @@ if (args.icon) {
 let cssPath: string | null = null
 if (args.css && (await exists(resolve(args.css)))) {
   const css = await readFile(resolve(args.css))
+  // class names in the fixes are CSS-module hashes of one bundle version: report the ones this bundle lacks
+  const bundleText = [...contents.values()].join('\n')
+  const classes = new Set([...css.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([A-Za-z][\w-]*)/g)].map((m) => m[1]!))
+  const stale = [...classes].filter((name) => !bundleText.includes(`"${name}"`) && !bundleText.includes(`.${name}`))
+  if (stale.length) warn(`${args.css}: classes not found in this bundle, those fixes no longer apply: ${stale.map((c) => '.' + c).join(', ')}`)
   cssPath = `/assets/overrides.${createHash('sha256').update(css).digest('hex').slice(0, 8)}.css`
   await writeFile(join(OUT, cssPath), css)
   page = page.replace(/<\/head>/i, `  <link rel="stylesheet" href="${cssPath}">\n  </head>`)
