@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { config } from '../../config'
 import { db } from '../../db/client'
-import { follows, hashtags, pollOptions, polls, pollVotes, postAttachments, postHashtags, postLikes, posts, users } from '../../db/schema'
+import { eventWallets, follows, hashtags, pollOptions, polls, pollVotes, postAttachments, postHashtags, postLikes, posts, users } from '../../db/schema'
 import { ApiError, badRequest, conflict, forbidden, notFound, validationError } from '../../lib/errors'
 import { decodeKeyset, encodeKeyset, parseOffset } from '../../lib/cursor'
 import type { SpanInput } from '../../lib/text'
@@ -13,6 +13,7 @@ import { notify } from '../../services/notifications'
 import { bumpCounter, dropCounters, getCounters, setDominantEmoji } from '../../services/post-stats'
 import { findPost, loadPolls, type PostRow, presentPost, presentPosts, requireVisiblePost, visibleAuthorCondition } from '../../services/posts'
 import { enforceActionLimit } from '../../services/rate-limit'
+import { eventActive } from '../event/service'
 import { canSeeContent, hasAccess, loadRelation, loadUserRecord, type UserRecord } from '../../services/users'
 
 export type PollInput = { question: string; options: { text: string }[]; multipleChoice?: boolean; multiple?: boolean }
@@ -22,6 +23,7 @@ export type CreatePostInput = {
   wallRecipientId?: string | null
   attachmentIds?: string[]
   poll?: PollInput | null
+  notebook?: { style: 'grid' | 'ruled' } | null
 }
 
 const postNotFound = () => notFound('Post not found')
@@ -61,8 +63,18 @@ export async function createPost(me: Me, input: CreatePostInput) {
   const post = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(posts)
-      .values({ authorId: me.id, wallRecipientId: wallRecipient?.id ?? null, content, spans: prepared.spans, createdAt: now })
+      .values({ authorId: me.id, wallRecipientId: wallRecipient?.id ?? null, content, spans: prepared.spans, notebookStyle: input.notebook?.style ?? null, createdAt: now })
       .returning()
+    if (input.notebook) {
+      if (!eventActive()) throw new ApiError(400, 'POST_NOTEBOOK_EVENT_ENDED', 'Ивент закончился')
+      const column = input.notebook.style === 'grid' ? eventWallets.notebookGrid : eventWallets.notebookRuled
+      const [wallet] = await tx
+        .update(eventWallets)
+        .set({ [input.notebook.style === 'grid' ? 'notebookGrid' : 'notebookRuled']: sql`${column} - 1` })
+        .where(and(eq(eventWallets.userId, me.id), sql`${column} > 0`))
+        .returning({ userId: eventWallets.userId })
+      if (!wallet) throw new ApiError(400, 'NO_POST_NOTEBOOKS', 'Нет тетрадок')
+    }
     if (attachments.length) {
       await tx.insert(postAttachments).values(attachments.map((file, position) => ({ postId: row!.id, fileId: file.id, position })))
     }

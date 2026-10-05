@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import { files, pollOptions, polls, pollVotes, postAttachments, postLikes, posts, postViews, users } from '../db/schema'
+import { contentRevision } from '../lib/crypto'
 import { forbidden, notFound } from '../lib/errors'
 import { iso } from '../lib/time'
 import { issueViewToken } from '../lib/view-token'
@@ -153,6 +154,8 @@ export async function presentPosts(rows: PostRow[], viewerId: string | null) {
       isOwner: viewerId === post.authorId,
       isPinned: owner?.pinnedPostId === post.id,
       dominantEmoji: post.dominantEmoji,
+      notebook: post.notebookStyle ? { style: post.notebookStyle } : null,
+      revision: contentRevision(post.content),
       wallRecipientId: post.wallRecipientId,
       wallRecipient: post.wallRecipientId ? (briefs.get(post.wallRecipientId) ?? null) : null,
       vs: issueViewToken(post.id, viewerId)

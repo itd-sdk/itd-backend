@@ -246,6 +246,8 @@ export const posts = pgTable(
     repostsCount: integer('reposts_count').notNull().default(0),
     viewsCount: integer('views_count').notNull().default(0),
     dominantEmoji: text('dominant_emoji'),
+    // event post notebook: grid | ruled
+    notebookStyle: text('notebook_style').$type<'grid' | 'ruled'>(),
     editedAt: ts('edited_at'),
     deletedAt: ts('deleted_at'),
     deletedBy: uuid('deleted_by'),
@@ -570,9 +572,13 @@ export const eventWallets = pgTable('event_wallets', {
   balance: integer('balance').notNull().default(0),
   redPens: integer('red_pens').notNull().default(0),
   correctors: integer('correctors').notNull().default(0),
+  notebookGrid: integer('notebook_grid').notNull().default(0),
+  notebookRuled: integer('notebook_ruled').notNull().default(0),
   activeNicknameId: text('active_nickname_id'),
   updatedAt: ts('updated_at').notNull().defaultNow()
 })
+
+export type EventItemKind = 'sticker' | 'eraser' | 'window' | 'stain' | 'whoopee_cushion' | 'bell' | 'aura_analyzer' | 'clan_image'
 
 export const eventItems = pgTable(
   'event_items',
@@ -581,7 +587,8 @@ export const eventItems = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'sticker' | 'eraser' | 'window' | 'stain' | 'whoopee_cushion'>().notNull(),
+    // bell, aura_analyzer and clan_image are one-off items: owning one is the state
+    kind: text('kind').$type<EventItemKind>().notNull(),
     asset: text('asset'),
     createdAt: createdAt(),
     usedAt: ts('used_at')

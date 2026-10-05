@@ -1,3 +1,4 @@
+import { broadcastChannel, subscribe } from '../src/services/realtime'
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { deflateSync } from 'node:zlib'
 import { eq, sql } from 'drizzle-orm'
@@ -189,6 +190,102 @@ describe('account purge', () => {
     expect(profile!.followersCount).toBe(0)
     expect(await db.select().from(follows).where(eq(follows.followingId, staying.id))).toHaveLength(0)
     expect((await api('GET', '/users/me', { token: leaving.token })).status).toBe(401)
+  })
+})
+
+describe('event items (free stub shop)', () => {
+  const free = (user: TestUser, key: string, amount: number) => api('POST', `/v1/aliceai/free/${key}`, { token: user.token, body: { amount } })
+  const item = (state: any, key: string) => state.items.find((i: any) => i.key === key)
+
+  test('every item can be granted and taken back', async () => {
+    const user = await createUser()
+    const initial = (await api('GET', '/v1/aliceai/free', { token: user.token })).body
+    expect(initial.enabled).toBe(true)
+    expect(initial.items.map((i: any) => i.key)).toEqual([
+      'notebook_grid', 'notebook_ruled', 'pin_aliceai', 'red_pen', 'corrector', 'sticker', 'balloon', 'bell', 'aura_analyzer', 'nickname', 'whoopee_cushion', 'window', 'clan_image'
+    ])
+    for (const i of initial.items) {
+      const granted = (await free(user, i.key, i.once ? 1 : 3)).body
+      expect(item(granted, i.key).count).toBe(i.once ? 1 : 3)
+      // granting a one-off again keeps one
+      if (i.once) expect(item((await free(user, i.key, 1)).body, i.key).count).toBe(1)
+      const back = (await free(user, i.key, i.once ? -1 : -2)).body
+      expect(item(back, i.key).count).toBe(i.once ? 0 : 1)
+    }
+    expect((await free(user, 'nope', 1)).body.error.code).toBe('ITEM_NOT_FOUND')
+    expect((await free(user, 'sticker', 5000)).body.error.code).toBe('VALIDATION_ERROR')
+
+    // granted things show up where the web client reads them
+    const inventory = (await api('GET', '/v1/aliceai/inventory', { token: user.token })).body.items
+    expect(inventory.map((i: any) => i.kind).sort()).toEqual(['stain', 'sticker', 'whoopee_cushion', 'window'])
+    expect(inventory.find((i: any) => i.kind === 'sticker').asset).toStartWith('sticker_')
+    expect((await api('GET', '/red-pens/inventory', { token: user.token })).body.data.events[0].balance).toBe(1)
+    expect((await api('GET', '/post-notebooks/inventory', { token: user.token })).body.data).toMatchObject({ applicationsEnabled: true, balance: { grid: 1, ruled: 1 } })
+  })
+
+  test('pin, nickname and aura', async () => {
+    const user = await createUser()
+    await free(user, 'pin_aliceai', 1)
+    expect((await api('PUT', '/users/me/pin', { token: user.token, body: { slug: 'aliceai' } })).body.success).toBe(true)
+    expect((await api('GET', `/users/${user.username}`)).body.pin).toMatchObject({ slug: 'aliceai', url: '/public/events/aliceai/pin-aliceai.svg' })
+    await free(user, 'pin_aliceai', -1)
+    expect((await api('GET', `/users/${user.username}`)).body.pin).toBeNull()
+
+    const nick = item((await free(user, 'nickname', 1)).body, 'nickname').note
+    const mine = (await api('GET', '/v1/aliceai/nicknames', { token: user.token })).body
+    expect(mine).toMatchObject({ owned: [nick], active: nick })
+    expect((await api('PUT', '/v1/aliceai/nicknames/active', { token: user.token, body: { form: null } })).body).toEqual({ nickname: null })
+    expect((await api('PUT', '/v1/aliceai/nicknames/active', { token: user.token, body: { form: nick } })).body).toEqual({ nickname: nick })
+    const shown = (await api('GET', `/event-nicknames?ids=${user.id}`)).body.data[user.id]
+    expect(shown).toMatchObject({ label: nick, eventId: 'aliceai', stateVersion: 0 })
+
+    await free(user, 'aura_analyzer', 1)
+    const aura = (await api('GET', `/v1/aliceai/profiles/${user.id}`, { token: user.token })).body.aura
+    expect(aura).toBeGreaterThanOrEqual(0)
+    expect(aura).toBeLessThanOrEqual(100)
+  })
+
+  test('the bell rings for everyone online', async () => {
+    const user = await createUser()
+    const heard: any[] = []
+    const off = await subscribe(broadcastChannel(), (message) => heard.push(message))
+    await free(user, 'bell', 1)
+    for (let i = 0; i < 20 && !heard.length; i++) await Bun.sleep(25)
+    off()
+    expect(heard[0]).toMatchObject({ event: 'alice.bell', data: { buyerUsername: user.username } })
+  })
+
+  test('notebook posts, sticker, balloon, cushion and curtains answer in the client format', async () => {
+    const owner = await createUser()
+    const guest = await createUser()
+    expect((await api('POST', '/posts', { token: owner.token, body: { content: 'тетрадь', notebook: { style: 'grid' } } })).body.error.code).toBe('NO_POST_NOTEBOOKS')
+    await free(owner, 'notebook_grid', 1)
+    const post = await api('POST', '/posts', { token: owner.token, body: { content: 'тетрадь', notebook: { eventId: 'aliceai', style: 'grid', operationId: crypto.randomUUID() } } })
+    expect(post.status).toBe(201)
+    expect(post.body.notebook).toEqual({ style: 'grid' })
+    expect(post.body.revision).toMatch(/^[0-9a-f]{16}$/)
+    expect((await api('GET', '/post-notebooks/inventory', { token: owner.token })).body.data.balance.grid).toBe(0)
+
+    await free(guest, 'sticker', 1)
+    await free(guest, 'balloon', 1)
+    await free(guest, 'whoopee_cushion', 1)
+    const items = (await api('GET', '/v1/aliceai/inventory', { token: guest.token })).body.items
+    const id = (kind: string) => items.find((i: any) => i.kind === kind).id
+    const placed = await api('POST', `/v1/aliceai/profiles/${owner.id}/placements`, { token: guest.token, body: { inventoryItemId: id('sticker'), x: 0.3, y: 0.4, size: 0.16, angle: 0 } })
+    expect(placed.body).toMatchObject({ rev: expect.any(Number), placement: { kind: 'sticker', x: 0.3, y: 0.4 }, evicted: [] })
+    const balloon = await api('POST', `/v1/aliceai/profiles/${owner.id}/balloons`, {
+      token: guest.token,
+      body: { inventoryItemId: id('stain'), x: 0.5, y: 0.5, anchorKind: 'post', anchorId: post.body.id }
+    })
+    expect(balloon.body.balloon).toMatchObject({ anchor: { kind: 'post', id: post.body.id } })
+
+    await api('POST', `/v1/aliceai/profiles/${owner.id}/cushion`, { token: guest.token, body: { inventoryItemId: id('whoopee_cushion'), x: 0.2, y: 0.2, anchorKind: 'profile_header', anchorId: null } })
+    expect((await api('POST', `/v1/aliceai/profiles/${owner.id}/cushion/claim`, { token: guest.token })).body.show).toBe(false)
+    expect((await api('POST', `/v1/aliceai/profiles/${owner.id}/cushion/claim`, { token: owner.token })).body).toMatchObject({ show: true, x: 0.2 })
+    expect((await api('POST', `/v1/aliceai/profiles/${owner.id}/cushion/claim`, { token: owner.token })).body.show).toBe(false)
+
+    const corrector = (await api('GET', `/correctors/state?ids=${post.body.id}`, { token: guest.token })).body.data[post.body.id]
+    expect(corrector).toMatchObject({ revision: post.body.revision, serverTime: expect.any(String), events: [{ id: 'aliceai', used: 0 }] })
   })
 })
 

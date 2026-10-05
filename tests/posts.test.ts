@@ -64,7 +64,7 @@ describe('create', () => {
     expect((await api('DELETE', `/posts/${onWall.id}`, { token: owner.token })).body.success).toBe(true)
   })
 
-  test('attachments must be owned; video needs НУКСТА', async () => {
+  test('attachments must be owned; videos are open to everyone', async () => {
     const alice = await createUser()
     const bob = await createUser()
     const image = await api('POST', '/files/upload', { token: alice.token, form: uploadForm(PNG_1x1, 'dot.png') })
@@ -82,8 +82,12 @@ describe('create', () => {
     expect(video.body.type).toBe('video')
     // videos are open to everyone (no subscription)
     expect((await api('POST', '/posts', { token: alice.token, body: { attachmentIds: [video.body.id] } })).status).toBe(201)
-    expect((await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })).status).toBe(201)
-    expect((await api('GET', '/profile-avatar', { token: bob.token })).body.data.available).toBe(true)
+    // a picture instead of the clan emoji is an event item
+    expect((await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })).body.error.code).toBe('ITEM_UNAVAILABLE')
+    await api('POST', '/v1/aliceai/free/clan_image', { token: bob.token, body: { amount: 1 } })
+    const picture = await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })
+    expect(picture.status).toBe(201)
+    expect((await api('GET', '/profile-avatar', { token: bob.token })).body.data).toEqual({ active: { url: picture.body.url }, available: true })
 
     const text = await api('POST', '/files/upload', { token: alice.token, form: uploadForm(Buffer.from('just some text, not media'), 'a.png', 'image/png') })
     expect(text.body.error.message).toBe('Недопустимый тип файла')

@@ -226,6 +226,8 @@ const postFields = {
   isOwner: t.Boolean(),
   isPinned: t.Boolean(),
   dominantEmoji: Nullable(t.String()),
+  notebook: Nullable(t.Object({ style: t.String() })),
+  revision: t.String({ description: 'Content hash for red pens and correctors' }),
   wallRecipientId: Nullable(Uuid),
   wallRecipient: Nullable(UserBriefModel),
   vs: t.String({ description: 'View session token for /v1/i dwell reports' })

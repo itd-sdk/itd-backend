@@ -5,9 +5,9 @@ import { db } from '../../db/client'
 import { eventItems } from '../../db/schema'
 import { authPlugin } from '../../plugins/auth'
 import { Enum, Uuid } from '../../schemas'
-import { publish, userChannel } from '../../services/realtime'
 import { requireTargetUser } from '../../services/users'
 import {
+  eventActive,
   applyTool,
   assertEventEnabled,
   breakWindow,
@@ -31,7 +31,10 @@ import {
   throwBalloon,
   toolInventory,
   toolState,
-  useCushion
+  placeCushion,
+  claimCushion,
+  notebookInventory,
+  SHOP_INFO
 } from './service'
 
 const ProfileParams = t.Object({ id: t.String({ maxLength: 512 }) })
@@ -42,7 +45,14 @@ const SpotBody = t.Object({
   y: t.Number(),
   angle: t.Optional(t.Number()),
   size: t.Optional(t.Number()),
-  anchor: t.Optional(Anchor)
+  anchor: t.Optional(Anchor),
+  // the web client sends the anchor flattened
+  anchorKind: t.Optional(Enum(['banner', 'profile_header', 'post'])),
+  anchorId: t.Optional(t.Nullable(t.String({ maxLength: 64 })))
+})
+const spotOf = (body: typeof SpotBody.static) => ({
+  ...body,
+  anchor: body.anchor ?? (body.anchorKind ? { kind: body.anchorKind, id: body.anchorId ?? null } : undefined)
 })
 const Ids = t.Object({ ids: t.String({ maxLength: 8000, description: 'Comma separated ids' }) })
 const splitIds = (ids: string) => ids.split(',').map((id) => id.trim()).filter((id) => /^[0-9a-f-]{36}$/i.test(id))
@@ -81,7 +91,7 @@ export const eventModule = new Elysia({ tags: ['Event'] })
   })
 
   // the web client shows the event while `enabled` is true, so an event past EVENT_ENDS_AT reports false
-  .get('/v1/event/status', () => ({ enabled: config.event.enabled && eventEndsAt().getTime() > Date.now(), eventId: config.event.id, endsAt: eventEndsAt().toISOString() }), {
+  .get('/v1/event/status', () => ({ enabled: eventActive(), eventId: config.event.id, endsAt: eventEndsAt().toISOString() }), {
     response: t.Object({ enabled: t.Boolean(), eventId: t.String(), endsAt: t.String() })
   })
 
@@ -108,7 +118,13 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     { user: true, response: t.Object({ items: t.Array(t.Object({ id: t.String(), kind: t.String(), asset: t.Nullable(t.String()) })) }) }
   )
 
-  .get('/v1/aliceai/shop', () => ({ items: SHOP.map((item) => ({ ...item })) }), { user: true })
+  // shop cards shown by the web client (product info); old-style priced offers stay for itd-sdk
+  .get('/v1/aliceai/shop', () => ({
+    items: [
+      ...SHOP_INFO.map((item) => ({ ...item, price: 0, isAvailable: eventActive() })),
+      ...SHOP.map((item) => ({ ...item, details: '', bullets: [], isAvailable: eventActive() }))
+    ]
+  }), { user: true })
 
   .post(
     '/v1/aliceai/shop/:itemId/buy',
@@ -149,7 +165,7 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     async ({ params, body, me }) => {
       assertEventEnabled()
       const target = await requireTargetUser(params.id, me)
-      return placeSticker(me.id, target.id, body.inventoryItemId, body)
+      return placeSticker(me.id, target.id, body.inventoryItemId, spotOf(body))
     },
     { user: true, params: ProfileParams, body: SpotBody }
   )
@@ -173,9 +189,9 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     async ({ params, body, me }) => {
       assertEventEnabled()
       const target = await requireTargetUser(params.id, me)
-      return throwBalloon(me.id, target.id, body.inventoryItemId, body)
+      return throwBalloon(me.id, target.id, body.inventoryItemId, spotOf(body))
     },
-    { user: true, params: ProfileParams, body: SpotBody, response: BalloonModel }
+    { user: true, params: ProfileParams, body: SpotBody, response: t.Object({ success: t.Boolean(), balloon: BalloonModel }) }
   )
 
   .post(
@@ -193,18 +209,26 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     async ({ params, body, me }) => {
       assertEventEnabled()
       const target = await requireTargetUser(params.id, me)
-      const result = await useCushion(me.id, body.inventoryItemId)
-      await publish(userChannel(target.id), 'alice.bell', {
-        id: crypto.randomUUID(),
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        buyerUsername: `@${me.username}`
-      })
-      return result
+      return placeCushion(me.id, target.id, body.inventoryItemId, body)
     },
-    { user: true, params: ProfileParams, body: t.Object({ inventoryItemId: t.String({ maxLength: 64 }) }, { additionalProperties: true }) }
+    {
+      user: true,
+      params: ProfileParams,
+      body: t.Object({
+        inventoryItemId: t.String({ maxLength: 64 }),
+        x: t.Optional(t.Number()),
+        y: t.Optional(t.Number()),
+        anchorKind: t.Optional(t.String({ maxLength: 32 })),
+        anchorId: t.Optional(t.Nullable(t.String({ maxLength: 64 })))
+      })
+    }
   )
 
-  .post('/v1/aliceai/profiles/:id/cushion/claim', () => ({ success: true }), { user: true, params: ProfileParams })
+  // called by every visitor of a profile: plays the cushion for the first one after it was hidden
+  .post('/v1/aliceai/profiles/:id/cushion/claim', async ({ params, me }) => claimCushion(me.id, (await requireTargetUser(params.id, me)).id), {
+    user: true,
+    params: ProfileParams
+  })
 
   .post(
     '/v1/aliceai/profiles/:id/curtains/donations',
@@ -244,7 +268,7 @@ export const eventModule = new Elysia({ tags: ['Event'] })
     { user: true, params: t.Object({ id: Uuid }), detail: { summary: 'Hand a post over to the waste-paper collection (coins once per post)' } }
   )
 
-  .get('/post-notebooks/inventory', () => ({ data: { items: [], balance: 0 } }), { user: true })
+  .get('/post-notebooks/inventory', ({ me }) => notebookInventory(me.id), { user: true })
 
   // ------------------------------------------------------------ red pens & correctors
 

@@ -8,6 +8,7 @@ import { adminModule } from './modules/admin'
 import { commentsModule } from './modules/comments'
 import { dwellModule } from './modules/dwell'
 import { eventModule } from './modules/event'
+import { freeItemsModule } from './modules/event/free'
 import { filesModule } from './modules/files'
 import { hashtagsModule } from './modules/hashtags'
 import { notificationsModule } from './modules/notifications'
@@ -54,6 +55,7 @@ export function createApp() {
     .use(verificationModule)
     .use(dwellModule)
     .use(eventModule)
+    .use(freeItemsModule)
     .use(adminModule)
 
   return new Elysia({ serve: { idleTimeout: 120, maxRequestBodySize: config.storage.maxVideoSize + 1024 * 1024 } })

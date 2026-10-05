@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ивент «Алиса AI»</title>
+  <style>
+    :root {
+      --bg: #ffffff; --card: #f4f4f6; --text: #111114; --muted: #6b6b76; --border: #e2e2e8;
+      --accent: #7c3aed; --accent-text: #ffffff; --danger: #d92d20; --ok: #16a34a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f0f12; --card: #1b1b21; --text: #f2f2f5; --muted: #9a9aa6; --border: #2c2c35; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+    h1 { font-size: 24px; margin: 0 0 4px; }
+    .lead { color: var(--muted); margin: 0 0 20px; }
+    .status { padding: 12px 14px; border-radius: 12px; background: var(--card); margin-bottom: 16px; }
+    .status.error { color: var(--danger); }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+    .item { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; transition: box-shadow .3s; }
+    .item.highlight { box-shadow: 0 0 0 3px var(--accent); }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .title { font-weight: 600; }
+    .count { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+    .count.owned { color: var(--ok); }
+    .desc { color: var(--muted); font-size: 13px; }
+    .note { font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    button, .file { font: inherit; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    button.danger { color: var(--danger); }
+    button:disabled { opacity: .5; cursor: default; }
+    input[type=number] { width: 80px; font: inherit; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+    .file input { display: none; }
+    .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    .toast.show { opacity: .92; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Ивент «Алиса AI»</h1>
+  <p class="lead">Пока это заглушка магазина: любые предметы можно выдать себе бесплатно и забрать обратно.</p>
+  <div id="status" class="status">Загрузка…</div>
+  <div id="items" class="grid"></div>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+  // talks to the main page (eventframe) for the access token, falls back to the refresh cookie when opened directly
+  const API = '/api'
+  const embedded = window.parent !== window
+  let token = null
+  let me = null
+  let pendingToken = null
+
+  const $ = (id) => document.getElementById(id)
+  const toast = (text) => {
+    const el = $('toast')
+    el.textContent = text
+    el.classList.add('show')
+    clearTimeout(toast.timer)
+    toast.timer = setTimeout(() => el.classList.remove('show'), 2200)
+  }
+  const tell = (message) => embedded && window.parent.postMessage(message, window.location.origin)
+
+  window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin || event.data?.type !== 'itd-event:auth') return
+    token = event.data.token || null
+    pendingToken?.(token)
+    pendingToken = null
+  })
+
+  async function getToken(expired = false) {
+    if (embedded) {
+      return new Promise((resolve) => {
+        pendingToken = resolve
+        tell({ type: 'itd-event:auth-request', expired })
+        setTimeout(() => pendingToken === resolve && resolve(null), 5000)
+      })
+    }
+    const res = await fetch(`${API}/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
+    return res.ok ? (await res.json()).accessToken : null
+  }
+
+  async function api(method, path, body, retried = false) {
+    if (!token) token = await getToken()
+    if (!token) throw Object.assign(new Error('Войдите в аккаунт, чтобы получить предметы'), { auth: true })
+    const headers = { authorization: `Bearer ${token}` }
+    if (body && !(body instanceof FormData)) headers['content-type'] = 'application/json'
+    const res = await fetch(API + path, { method, headers, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined })
+    if (res.status === 401 && !retried) {
+      token = await getToken(true)
+      return api(method, path, body, true)
+    }
+    const data = res.status === 204 ? null : await res.json().catch(() => null)
+    if (!res.ok) throw new Error(data?.error?.message || data?.message || `Ошибка ${res.status}`)
+    return data
+  }
+
+  // /event/alice-ai?product=...&variant=... from the "Купить" buttons of the main client
+  const params = new URLSearchParams(window.location.search)
+  const PRODUCT_KEYS = { post_notebook: params.get('variant') === 'ruled' ? 'notebook_ruled' : 'notebook_grid', red_pen: 'red_pen', duty_corrector: 'corrector', aura_analyzer: 'aura_analyzer' }
+  const focusKey = PRODUCT_KEYS[params.get('product')] ?? null
+
+  function button(label, onClick, className = '') {
+    const b = document.createElement('button')
+    b.textContent = label
+    b.className = className
+    b.onclick = async () => {
+      b.disabled = true
+      try { await onClick() } catch (error) { toast(error.message) } finally { b.disabled = false }
+    }
+    return b
+  }
+
+  async function change(item, amount) {
+    const state = await api('POST', `/v1/aliceai/free/${item.key}`, { amount })
+    render(state)
+    if (item.key === 'nickname') tell({ type: 'itd-event:profile-changed', profileId: me.id, nickname: true })
+    if (item.key === 'clan_image' && amount < 0) tell({ type: 'itd-event:profile-changed', profileId: me.id, avatar: true })
+    if (item.key === 'bell' && amount > 0) toast('Дзынь! Звонок прозвенел для всех онлайн')
+    else toast(amount > 0 ? `Выдано: ${item.title}` : `Забрано: ${item.title}`)
+  }
+
+  function render(state) {
+    $('status').hidden = state.enabled
+    if (!state.enabled) {
+      $('status').hidden = false
+      $('status').textContent = 'Ивент сейчас выключен: выдать предметы нельзя.'
+    }
+    const list = $('items')
+    list.replaceChildren()
+    for (const item of state.items) {
+      const card = document.createElement('section')
+      card.className = 'item' + (item.key === focusKey ? ' highlight' : '')
+      card.id = `item-${item.key}`
+      const count = item.once ? (item.owned ? 'есть' : 'нет') : `× ${item.count}`
+      card.innerHTML = `<div class="head"><span class="title"></span><span class="count ${item.owned ? 'owned' : ''}"></span></div><div class="desc"></div>`
+      card.querySelector('.title').textContent = item.title
+      card.querySelector('.count').textContent = count
+      card.querySelector('.desc').textContent = item.description
+      if (item.note) {
+        const note = document.createElement('div')
+        note.className = 'note'
+        note.textContent = item.note
+        card.append(note)
+      }
+      const actions = document.createElement('div')
+      actions.className = 'actions'
+      if (item.once) {
+        actions.append(item.owned ? button('Забрать', () => change(item, -1), 'danger') : button('Выдать', () => change(item, 1), 'primary'))
+        if (item.key === 'nickname' && item.owned) actions.append(button('Другая', async () => { await change(item, -1); await change(item, 1) }))
+        if (item.key === 'aura_analyzer' && item.owned) actions.append(button('Перемерить', async () => { await change(item, -1); await change(item, 1) }))
+        if (item.key === 'clan_image' && item.owned) actions.append(...avatarControls())
+      } else {
+        for (const n of [1, 5, 10]) actions.append(button(`+${n}`, () => change(item, n), n === 1 ? 'primary' : ''))
+        const input = document.createElement('input')
+        input.type = 'number'
+        input.min = '1'
+        input.max = '1000'
+        input.value = '50'
+        actions.append(input, button('Выдать', () => change(item, Math.min(1000, Math.max(1, Number(input.value) || 1)))))
+        actions.append(button('−1', () => change(item, -1), 'danger'), button('Забрать все', () => change(item, -Math.max(1, item.count)), 'danger'))
+      }
+      card.append(actions)
+      list.append(card)
+    }
+    if (focusKey && !render.scrolled) {
+      render.scrolled = true
+      $(`item-${focusKey}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  }
+
+  function avatarControls() {
+    const label = document.createElement('label')
+    label.className = 'file'
+    label.textContent = 'Загрузить картинку'
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = async () => {
+      if (!input.files?.[0]) return
+      const form = new FormData()
+      form.append('file', input.files[0])
+      try {
+        await api('POST', '/files/avatar', form)
+        tell({ type: 'itd-event:profile-changed', profileId: me.id, avatar: true })
+        toast('Картинка установлена вместо эмодзи клана')
+      } catch (error) {
+        toast(error.message)
+      }
+      input.value = ''
+    }
+    label.append(input)
+    const reset = button('Вернуть эмодзи', async () => {
+      await api('DELETE', '/profile-avatar')
+      tell({ type: 'itd-event:profile-changed', profileId: me.id, avatar: true })
+      toast('Снова эмодзи клана')
+    })
+    return [label, reset]
+  }
+
+  async function start() {
+    try {
+      me = await api('GET', '/users/me')
+      render(await api('GET', '/v1/aliceai/free'))
+    } catch (error) {
+      $('status').hidden = false
+      $('status').className = 'status error'
+      $('status').textContent = error.message
+    }
+  }
+  start()
+</script>
+</body>
+</html>

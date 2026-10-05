@@ -8,7 +8,8 @@
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
  * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn,
  * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon,
- * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles.
+ * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles,
+ * --mirror-event: download the site's own event app instead of the stub from deploy/frontend/event-app.
  *
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
@@ -29,6 +30,7 @@ const { values: args } = parseArgs({
     icon: { type: 'string', default: process.env.SITE_ICON ?? '' },
     css: { type: 'string', default: process.env.SITE_CSS ?? join(import.meta.dir, 'overrides.css') },
     offline: { type: 'boolean', default: false },
+    'mirror-event': { type: 'boolean', default: false },
     'keep-cdn': { type: 'boolean', default: false }
   }
 })
@@ -393,7 +395,15 @@ async function mirrorEventApp(base: string) {
   return files
 }
 
-if (!args.offline) {
+const EVENT_STUB = join(import.meta.dir, 'event-app')
+if (!args['mirror-event'] && (await exists(EVENT_STUB))) {
+  // our stub: free items, see src/modules/event/free.ts
+  for (const base of eventBases) {
+    await cp(EVENT_STUB, join(OUT, base), { recursive: true })
+    eventApps.push({ base, files: (await readdir(EVENT_STUB)).length })
+    console.log(`event app ${base}: stub from deploy/frontend/event-app`)
+  }
+} else if (!args.offline) {
   for (const base of eventBases) {
     try {
       const files = await mirrorEventApp(base)

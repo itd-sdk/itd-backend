@@ -31,6 +31,8 @@ function wire() {
 
 export const userChannel = (userId: string) => rk('ch', 'user', userId)
 export const qrChannel = (qrId: string) => rk('ch', 'qr', qrId)
+/** Every open stream listens here (the event bell rings for everyone online) */
+export const broadcastChannel = () => rk('ch', 'all')
 
 /** Subscribes this process to a channel; returns an unsubscribe callback */
 export async function subscribe(channel: string, listener: Listener) {

@@ -1,14 +1,22 @@
-import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import { config } from '../../config'
 import { db, type Transaction } from '../../db/client'
-import { type EventAnchor, eventItems, eventNicknames, eventPlacements, eventProfiles, eventWallets, posts, postMarks } from '../../db/schema'
+import { type EventAnchor, type EventItemKind, eventItems, eventNicknames, eventPlacements, eventProfiles, eventWallets, posts, postMarks } from '../../db/schema'
 import { ApiError, badRequest, forbidden, notFound } from '../../lib/errors'
-import { sha256 } from '../../lib/crypto'
+import { contentRevision } from '../../lib/crypto'
 import { iso } from '../../lib/time'
 import { redis, rk } from '../../redis'
 import { loadBriefs } from '../../services/users'
 
 export type ItemKind = 'sticker' | 'eraser' | 'window' | 'stain' | 'whoopee_cushion'
+
+/** Items of the stub shop: everything is granted for free from the event page (./free.ts) */
+export const SHOP_INFO = [
+  { id: 'post_notebook', title: 'Тетрадка', details: 'Оформление поста: тетрадь в клетку или в линейку', bullets: ['Выбирается при публикации поста', 'Одна тетрадка — один пост'] },
+  { id: 'red_pen', title: 'Красная ручка', details: 'Исправить слово в чужом посте', bullets: ['Исправление видно всем сутки'] },
+  { id: 'duty_corrector', title: 'Корректор', details: 'Замазать фрагмент текста в посте', bullets: ['Видно всем сутки'] },
+  { id: 'aura_analyzer', title: 'Анализатор ауры', details: 'Показывает ауру профиля', bullets: ['Ставит случайное значение от 0 до 100'] }
+]
 
 export const SHOP = [
   { id: 'sticker', kind: 'sticker', title: 'Стикер', price: 10, asset: 'sticker_star' },
@@ -21,7 +29,7 @@ export const SHOP = [
   { id: 'nickname', kind: 'nickname', title: 'Кликуха на неделю', price: 30, asset: null }
 ] as const
 
-const NICKNAMES = ['Отличник', 'Двоечник', 'Староста', 'Хулиган', 'Ботаник', 'Прогульщик', 'Звезда класса', 'Тихоня']
+export const NICKNAMES = ['Отличник', 'Двоечник', 'Староста', 'Хулиган', 'Ботаник', 'Прогульщик', 'Звезда класса', 'Тихоня']
 const WINDOW_BROKEN_MS = 60 * 60_000
 const BALLOON_TTL_MS = 10 * 60_000
 const MARK_TTL_MS = 24 * 60 * 60_000
@@ -34,6 +42,8 @@ export function eventEndsAt() {
   const now = new Date()
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
 }
+
+export const eventActive = () => config.event.enabled && eventEndsAt().getTime() > Date.now()
 
 export function assertEventEnabled() {
   if (!config.event.enabled || eventEndsAt().getTime() <= Date.now()) throw eventDisabled()
@@ -199,8 +209,15 @@ export async function placeSticker(actorId: string, profileId: string, itemId: s
         createdBy: actorId
       })
       .returning()
-    await bumpRev(tx, profileId)
-    return { success: true, placementId: placement!.id }
+    const [profile] = await bumpRev(tx, profileId).returning({ rev: eventProfiles.rev })
+    const p = placement!
+    return {
+      success: true,
+      placementId: p.id,
+      rev: profile!.rev,
+      placement: { id: p.id, kind: 'sticker' as const, asset: p.asset ?? 'sticker_star', x: p.x, y: p.y, z: p.z || 1, size: p.size, angle: p.angle, wear: p.wear },
+      evicted: [] as string[]
+    }
   })
 }
 
@@ -223,7 +240,7 @@ export async function throwBalloon(actorId: string, profileId: string, itemId: s
       })
       .returning()
     await bumpRev(tx, profileId)
-    return {
+    const shape = {
       id: balloon!.id,
       x: balloon!.x,
       y: balloon!.y,
@@ -233,6 +250,7 @@ export async function throwBalloon(actorId: string, profileId: string, itemId: s
       expiresAt: balloon!.expiresAt!.toISOString(),
       anchor: balloon!.anchor
     }
+    return { success: true, balloon: shape }
   })
 }
 
@@ -277,11 +295,38 @@ export async function breakWindow(actorId: string, profileId: string, itemId: st
   })
 }
 
-export async function useCushion(actorId: string, itemId: string) {
-  return db.transaction(async (tx) => {
+const CUSHION_TTL_SECONDS = 24 * 60 * 60
+const cushionKey = (profileId: string) => rk('event', 'cushion', profileId)
+type Cushion = { id: string; placedBy: string; x: number; y: number; anchorKind: string; anchorId: string | null; expiresAt: string }
+
+/** Hides a whoopee cushion on a profile: the next visitor other than the prankster sits on it */
+export async function placeCushion(actorId: string, profileId: string, itemId: string, spot: { x?: number; y?: number; anchorKind?: string; anchorId?: string | null }) {
+  if (await redis.exists(cushionKey(profileId))) throw new ApiError(409, 'CUSHION_ACTIVE', 'На этом профиле уже лежит подушка')
+  await db.transaction(async (tx) => {
     await consumeItem(tx, actorId, itemId, 'whoopee_cushion')
-    return { success: true }
   })
+  const cushion: Cushion = {
+    id: crypto.randomUUID(),
+    placedBy: actorId,
+    x: clamp01(spot.x ?? 0.5),
+    y: clamp01(spot.y ?? 0.5),
+    anchorKind: spot.anchorKind ?? 'profile_header',
+    anchorId: spot.anchorId ?? null,
+    expiresAt: new Date(Date.now() + CUSHION_TTL_SECONDS * 1000).toISOString()
+  }
+  await redis.set(cushionKey(profileId), JSON.stringify(cushion), 'EX', CUSHION_TTL_SECONDS)
+  return { success: true, id: cushion.id }
+}
+
+export async function claimCushion(viewerId: string, profileId: string) {
+  const raw = await redis.get(cushionKey(profileId))
+  if (!raw) return { show: false }
+  const cushion = JSON.parse(raw) as Cushion
+  if (cushion.placedBy === viewerId) return { show: false }
+  // only one visitor gets it
+  if ((await redis.del(cushionKey(profileId))) === 0) return { show: false }
+  const { placedBy: _, ...rest } = cushion
+  return { ...rest, show: true }
 }
 
 export async function donateCurtains(actorId: string, profileId: string, amount: number) {
@@ -294,7 +339,8 @@ export async function donateCurtains(actorId: string, profileId: string, amount:
       .where(eq(eventProfiles.userId, profileId))
       .returning()
     await bumpRev(tx, profileId)
-    return { success: true, fund: profile!.curtainsFund, goal: profile!.curtainsGoal, hasCurtains: profile!.curtainsAvailable, balance: wallet.balance }
+    const curtains = { fund: profile!.curtainsFund, goal: profile!.curtainsGoal, hasCurtains: profile!.curtainsAvailable, closed: profile!.curtainsClosed }
+    return { success: true, ...curtains, curtains, donated: amount, balance: wallet.balance }
   })
 }
 
@@ -313,8 +359,13 @@ export async function setCurtains(userId: string, profileId: string, closed: boo
   if (userId !== profileId) throw forbidden('Можно управлять только своими шторами')
   const profile = await ensureProfile(db, profileId)
   if (!profile.curtainsAvailable) throw badRequest('У вас ещё нет штор', 'NO_CURTAINS')
-  await db.update(eventProfiles).set({ curtainsClosed: closed, rev: sql`${eventProfiles.rev} + 1` }).where(eq(eventProfiles.userId, profileId))
-  return { success: true, closed }
+  const [updated] = await db
+    .update(eventProfiles)
+    .set({ curtainsClosed: closed, rev: sql`${eventProfiles.rev} + 1` })
+    .where(eq(eventProfiles.userId, profileId))
+    .returning()
+  const curtains = { fund: updated!.curtainsFund, goal: updated!.curtainsGoal, hasCurtains: updated!.curtainsAvailable, closed: updated!.curtainsClosed }
+  return { success: true, closed, rev: updated!.rev, curtains }
 }
 
 // ---------------------------------------------------------------- nicknames
@@ -329,6 +380,8 @@ export async function listNicknames(userId: string) {
   const active = rows.find((n) => n.id === wallet.activeNicknameId) ?? null
   return {
     nicknames: rows.map((n) => ({ id: n.id, label: n.label, styleKey: n.styleKey, eventId: n.eventId, expiresAt: n.expiresAt.toISOString(), stateVersion: 0 })),
+    // the web client lists and activates nicknames by their label
+    owned: rows.map((n) => n.label),
     active: active?.label ?? null,
     activeId: active?.id ?? null
   }
@@ -339,7 +392,15 @@ export async function setActiveNickname(userId: string, nicknameId: string | nul
     const [nickname] = await db
       .select()
       .from(eventNicknames)
-      .where(and(eq(eventNicknames.id, nicknameId), eq(eventNicknames.userId, userId), gt(eventNicknames.expiresAt, sql`now()`)))
+      .where(
+        and(
+          or(eq(eventNicknames.id, nicknameId), eq(eventNicknames.label, nicknameId)),
+          eq(eventNicknames.userId, userId),
+          gt(eventNicknames.expiresAt, sql`now()`)
+        )
+      )
+      .orderBy(desc(eventNicknames.expiresAt))
+      .limit(1)
     if (!nickname) throw notFound('Кликуха не найдена', 'NICKNAME_NOT_FOUND')
     await getWallet(userId)
     await db.update(eventWallets).set({ activeNicknameId: nickname.id }).where(eq(eventWallets.userId, userId))
@@ -354,12 +415,14 @@ export async function nicknamesFor(userIds: string[]) {
   const unique = [...new Set(userIds)].slice(0, 200)
   const rows = unique.length
     ? await db
-        .select({ userId: eventWallets.userId, label: eventNicknames.label, styleKey: eventNicknames.styleKey, expiresAt: eventNicknames.expiresAt })
+        .select({ userId: eventWallets.userId, id: eventNicknames.id, eventId: eventNicknames.eventId, label: eventNicknames.label, styleKey: eventNicknames.styleKey, expiresAt: eventNicknames.expiresAt })
         .from(eventWallets)
         .innerJoin(eventNicknames, eq(eventNicknames.id, eventWallets.activeNicknameId))
         .where(and(inArray(eventWallets.userId, unique), gt(eventNicknames.expiresAt, sql`now()`)))
     : []
-  const byUser = new Map(rows.map((r) => [r.userId, { label: r.label, styleKey: r.styleKey, expiresAt: r.expiresAt.toISOString() }]))
+  const byUser = new Map(
+    rows.map((r) => [r.userId, { id: r.id, label: r.label, styleKey: r.styleKey, eventId: r.eventId, expiresAt: r.expiresAt.toISOString(), stateVersion: 0 }])
+  )
   const serverTime = new Date()
   return {
     data: Object.fromEntries(unique.map((id) => [id, byUser.get(id) ?? null])),
@@ -371,7 +434,7 @@ export async function nicknamesFor(userIds: string[]) {
 // ---------------------------------------------------------------- red pens & correctors
 
 type Tool = 'red_pen' | 'corrector'
-const revisionOf = (content: string) => sha256(content).slice(0, 16)
+const revisionOf = contentRevision
 
 export async function toolInventory(userId: string, tool: Tool) {
   const wallet = await getWallet(userId)
@@ -406,16 +469,26 @@ export async function toolState(viewerId: string, tool: Tool, postIds: string[])
       eventId: m.eventId,
       start: m.start,
       end: m.end,
+      createdAt: m.createdAt.toISOString(),
       endsAt: new Date(m.createdAt.getTime() + MARK_TTL_MS).toISOString(),
       isOwner: m.authorId === viewerId,
       actor: briefs.get(m.authorId) ?? null
     })
+    // how many the viewer already used on this post (the client allows 3)
+    const used = own.filter((m) => m.authorId === viewerId).length
+    const serverTime = new Date().toISOString()
     data[id] =
       tool === 'corrector'
-        ? { revision: revisionOf(post.content), marks: own.map(render), events: eventsList() }
+        ? { revision: revisionOf(post.content), serverTime, marks: own.map(render), events: eventsList().map((e) => ({ ...e, used })) }
         : {
             revision: revisionOf(post.content),
-            claims: own.map((m) => ({ ...render(m), corrections: [{ start: m.start, end: m.end, replacement: m.replacement ?? '' }] })),
+            serverTime,
+            claims: own.map((m) => ({
+              ...render(m),
+              used: own.filter((o) => o.authorId === m.authorId).length,
+              corrections: [{ start: m.start, end: m.end, replacement: m.replacement ?? '' }]
+            })),
+            corrections: own.map((m) => ({ id: m.id, start: m.start, end: m.end, replacement: m.replacement ?? '', createdAt: m.createdAt.toISOString() })),
             events: eventsList()
           }
   }
@@ -501,4 +574,20 @@ export async function recyclePost(userId: string, postId: string) {
     .where(eq(eventWallets.userId, userId))
     .returning()
   return { success: true, reward: 1, balance: wallet!.balance }
+}
+
+// ---------------------------------------------------------------- post notebooks
+
+export async function notebookInventory(userId: string) {
+  const wallet = await getWallet(userId)
+  return { data: { eventId: config.event.id, applicationsEnabled: eventActive(), balance: { grid: wallet.notebookGrid, ruled: wallet.notebookRuled } } }
+}
+
+export async function ownsEventItem(userId: string, kind: EventItemKind) {
+  const [row] = await db
+    .select({ id: eventItems.id })
+    .from(eventItems)
+    .where(and(eq(eventItems.userId, userId), eq(eventItems.kind, kind), isNull(eventItems.usedAt)))
+    .limit(1)
+  return !!row
 }

@@ -1,17 +1,7 @@
 import { Elysia, t } from 'elysia'
 import { config } from '../../config'
 import { authPlugin } from '../../plugins/auth'
-import {
-  PollModel,
-  PostModel,
-  PostStatsModel,
-  PostsPageModel,
-  PostWithCommentsModel,
-  SpanInputModel,
-  SpanModel,
-  SuccessModel,
-  Uuid
-} from '../../schemas'
+import { Enum, PollModel, PostModel, PostsPageModel, PostStatsModel, PostWithCommentsModel, SpanInputModel, SpanModel, SuccessModel, Uuid } from '../../schemas'
 import { presentPost, requireVisiblePost } from '../../services/posts'
 import { requireTargetUser } from '../../services/users'
 import { listComments } from '../comments/service'
@@ -72,7 +62,9 @@ export const postsModule = new Elysia({ tags: ['Posts'] })
         spans: t.Optional(t.Array(SpanInputModel, { maxItems: 200 })),
         wallRecipientId: t.Optional(t.Nullable(Uuid)),
         attachmentIds: t.Optional(t.Array(Uuid, { maxItems: 20 })),
-        poll: t.Optional(t.Nullable(PollInput))
+        poll: t.Optional(t.Nullable(PollInput)),
+        // event post notebook, consumes one from the wallet
+        notebook: t.Optional(t.Nullable(t.Object({ eventId: t.Optional(t.String()), style: Enum(['grid', 'ruled']), operationId: t.Optional(t.String()) })))
       }),
       response: { 201: PostModel },
       detail: { summary: 'Create a post (optionally on another user wall, with attachments or a poll)' }

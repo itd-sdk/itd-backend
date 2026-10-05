@@ -8,7 +8,7 @@ import { authPlugin, loadProfile, readAuth } from '../../plugins/auth'
 import { NotificationModel, NotificationSettingsModel, Uuid } from '../../schemas'
 import { loadSettings, markRead, presentNotifications, type Settings, unreadCount } from '../../services/notifications'
 import { connectionClosed, connectionOpened } from '../../services/presence'
-import { subscribe, userChannel } from '../../services/realtime'
+import { broadcastChannel, subscribe, userChannel } from '../../services/realtime'
 
 function presentSettings(settings: Settings) {
   return {
@@ -161,8 +161,10 @@ export const notificationsModule = new Elysia({ prefix: '/notifications', tags: 
         sink.send({ userId: me.id, timestamp: Date.now() })
         await connectionOpened(me.id)
         const unsubscribe = await subscribe(userChannel(me.id), (message) => sink.send(message.data, message.event))
+        const unsubscribeAll = await subscribe(broadcastChannel(), (message) => sink.send(message.data, message.event))
         return () => {
           unsubscribe()
+          unsubscribeAll()
           void connectionClosed(me.id)
         }
       })
