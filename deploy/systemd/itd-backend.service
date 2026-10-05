@@ -15,6 +15,7 @@ ExecStartPre=/usr/local/bin/bun src/db/seed.ts
 ExecStart=/usr/local/bin/bun src/index.ts
 Restart=always
 RestartSec=3
+TimeoutStopSec=15
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
