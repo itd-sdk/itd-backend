@@ -1,6 +1,12 @@
 const env = process.env
 
 const str = (name: string, fallback: string) => env[name]?.trim() || fallback
+// the client keeps the event frame only for /public/events/aliceai/…: the old default /event/alice-ai (or a missing
+// trailing slash) makes it bounce between /event and /event/alice-ai, opening a new tab on every round
+const portalUrl = (url: string) => {
+  if (url.replace(/\/+$/, '') === '/event/alice-ai') return '/public/events/aliceai/'
+  return /\/public\/events\/[^/]+$/.test(url) ? `${url}/` : url
+}
 const optional = (name: string) => env[name]?.trim() || undefined
 const int = (name: string, fallback: number) => {
   const value = Number.parseInt(env[name] ?? '', 10)
@@ -105,7 +111,7 @@ export const config = {
     enabled: bool('EVENT_ENABLED', false),
     portalTitle: str('PORTAL_TITLE', 'Портал'),
     // the web client opens the event frame only for an active portal pointing at the event app
-    portalUrl: str('PORTAL_URL', '/public/events/aliceai/'),
+    portalUrl: portalUrl(str('PORTAL_URL', '/public/events/aliceai/')),
     portalActive: bool('PORTAL_ACTIVE', bool('EVENT_ENABLED', false)),
     id: str('EVENT_ID', 'aliceai'),
     endsAt: optional('EVENT_ENDS_AT'),

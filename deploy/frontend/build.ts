@@ -562,11 +562,13 @@ if (title || iconPath) {
   }
 }
 page = page.replace(/<\/head>/i, `  ${CAPTCHA_STUB}\n  </head>`)
-// served for /public/events/… only when the event app is missing: without this the whole site would load again
-// inside the event frame and redirect forever
+// served for /public/events/… only when nginx falls back to the site: without this the whole site would load again
+// inside the event frame
 const EVENT_GUARD =
-  '<script>if(location.pathname.indexOf("/public/events/")===0){window.stop();document.documentElement.innerHTML=' +
-  "'<body style=\"font:15px system-ui,sans-serif;padding:24px;color:#888\">Страница ивента не установлена: пересоберите веб-клиент и проверьте блок <code>location ~ ^/public/events/</code> в конфиге nginx.</body>'}</script>"
+  '<script>(function(){var m=/^\\/public\\/events\\/[^/]+\\//.exec(location.pathname);if(!m)return;window.stop();' +
+  // the nginx block for /public/events/ is missing: the file itself is still served as is
+  "if(!/\\/index\\.html$/.test(location.pathname)){location.replace(m[0]+'index.html'+location.search);return}" +
+  "document.documentElement.innerHTML='<body style=\"font:15px system-ui,sans-serif;padding:24px;color:#888\">Страница ивента не установлена: пересоберите веб-клиент и скопируйте его на сервер целиком (папка <code>public/events</code>).</body>'})()</script>"
 page = page.replace(/<head>/i, `<head>\n    ${EVENT_GUARD}`)
 await writeFile(join(OUT, 'index.html'), page)
 
