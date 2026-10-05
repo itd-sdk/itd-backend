@@ -8,6 +8,7 @@
  * Options: --out <dir> (default deploy/frontend/dist), --origin <url>, --cdn-origin <url>,
  * --telegram-bot <username> (or TELEGRAM_BOT, default openitd_bot), --keep-cdn,
  * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon,
+ * --version <x.y.z> (or SITE_VERSION): the version shown next to the logo (built into the bundle),
  * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles,
  * --mirror-event: download the site's own event app instead of the stub from deploy/frontend/event-app.
  *
@@ -28,6 +29,7 @@ const { values: args } = parseArgs({
     'telegram-bot': { type: 'string', default: process.env.TELEGRAM_BOT ?? 'openitd_bot' },
     title: { type: 'string', default: process.env.SITE_TITLE ?? '' },
     icon: { type: 'string', default: process.env.SITE_ICON ?? '' },
+    version: { type: 'string', default: process.env.SITE_VERSION ?? '' },
     css: { type: 'string', default: process.env.SITE_CSS ?? join(import.meta.dir, 'overrides.css') },
     offline: { type: 'boolean', default: false },
     'mirror-event': { type: 'boolean', default: false },
@@ -424,6 +426,16 @@ if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirro
 
 const BOT = args['telegram-bot']!.trim().replace(/^@/, '')
 const PATCHES = openitdPatches(BOT)
+const VERSION = args.version!.trim().replace(/^v/i, '')
+if (VERSION) {
+  // the label is a literal in the bundle: v + the release the client was built as
+  PATCHES.push({
+    name: 'version next to the logo',
+    find: /(title:"Что нового",children:\["v",)"[^"]*"/g,
+    replace: (_, head) => `${head}${JSON.stringify(VERSION)}`,
+    done: /title:"Что нового",children:\["v",/
+  })
+}
 
 const stats = { sentry: 0, cdn: 0, telegram: {} as Record<string, number> }
 for (const [file, original] of bundle) {
