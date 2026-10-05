@@ -219,9 +219,10 @@ describe('event items (free stub shop)', () => {
     const initial = (await api('GET', '/v1/aliceai/free', { token: user.token })).body
     expect(initial.enabled).toBe(true)
     expect(initial.items.map((i: any) => i.key)).toEqual([
-      'notebook_grid', 'notebook_ruled', 'pin_aliceai', 'red_pen', 'corrector', 'sticker', 'balloon', 'bell', 'aura_analyzer', 'nickname', 'whoopee_cushion', 'window', 'clan_image'
+      'notebook_grid', 'notebook_ruled', 'pin_aliceai', 'red_pen', 'corrector', 'sticker', 'balloon', 'bell', 'aura_analyzer', 'nickname', 'whoopee_cushion', 'window', 'chalk', 'curtains_fund', 'clan_image'
     ])
     for (const i of initial.items) {
+      if (i.resetOnly) continue
       const granted = (await free(user, i.key, i.once ? 1 : 3)).body
       expect(item(granted, i.key).count).toBe(i.once ? 1 : 3)
       // granting a one-off again keeps one
@@ -240,6 +241,23 @@ describe('event items (free stub shop)', () => {
     expect((await api('GET', '/post-notebooks/inventory', { token: user.token })).body.data).toMatchObject({ applicationsEnabled: true, balance: { grid: 1, ruled: 1 } })
   })
 
+  test('chalk goes to curtains, the collected fund can be reset', async () => {
+    const user = await createUser()
+    const friend = await createUser()
+    expect(item((await free(user, 'chalk', 30)).body, 'chalk').count).toBe(30)
+    const donate = (from: TestUser, to: TestUser, amount: number) =>
+      api('POST', `/v1/aliceai/profiles/${to.id}/curtains/donations`, { token: from.token, body: { amount } })
+    expect((await donate(user, user, 10)).body).toMatchObject({ fund: 10, balance: 20 })
+    await free(friend, 'chalk', 5)
+    await donate(friend, user, 5)
+    const state = (await api('GET', '/v1/aliceai/free', { token: user.token })).body
+    expect(item(state, 'chalk').count).toBe(20)
+    expect(item(state, 'curtains_fund')).toMatchObject({ count: 15, resetOnly: true })
+    expect((await free(user, 'curtains_fund', 1)).body.error.code).toBe('VALIDATION_ERROR')
+    expect(item((await free(user, 'curtains_fund', -15)).body, 'curtains_fund').count).toBe(0)
+    expect((await api('GET', `/v1/aliceai/profiles/${user.id}`, { token: user.token })).body.curtains.fund).toBe(0)
+  })
+
   test('pin, nickname and aura', async () => {
     const user = await createUser()
     await free(user, 'pin_aliceai', 1)
@@ -254,7 +272,8 @@ describe('event items (free stub shop)', () => {
     expect((await api('PUT', '/v1/aliceai/nicknames/active', { token: user.token, body: { form: null } })).body).toEqual({ nickname: null })
     expect((await api('PUT', '/v1/aliceai/nicknames/active', { token: user.token, body: { form: nick } })).body).toEqual({ nickname: nick })
     const shown = (await api('GET', `/event-nicknames?ids=${user.id}`)).body.data[user.id]
-    expect(shown).toMatchObject({ label: nick, eventId: 'aliceai', stateVersion: 0 })
+    // the web client draws the grey gradient only for this style
+    expect(shown).toMatchObject({ label: nick, eventId: 'aliceai', stateVersion: 0, styleKey: 'school_gold' })
 
     await free(user, 'aura_analyzer', 1)
     const aura = (await api('GET', `/v1/aliceai/profiles/${user.id}`, { token: user.token })).body.aura

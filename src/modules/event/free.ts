@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
 import { Elysia, t } from 'elysia'
 import { config } from '../../config'
 import { db, type Transaction } from '../../db/client'
@@ -13,7 +14,8 @@ import { assertEventEnabled, eventActive, getWallet, NICKNAMES } from './service
  * and can be taken back. Counted items take an amount, one-off items are owned or not.
  */
 
-type FreeItem = { key: string; title: string; description: string; once: boolean }
+// resetOnly: a counter that can only be taken down (to zero), not granted
+type FreeItem = { key: string; title: string; description: string; once: boolean; resetOnly?: boolean }
 
 export const FREE_ITEMS: FreeItem[] = [
   { key: 'notebook_grid', title: 'Тетрадь в клетку', description: 'Оформление поста, выбирается при публикации', once: false },
@@ -28,6 +30,8 @@ export const FREE_ITEMS: FreeItem[] = [
   { key: 'nickname', title: 'Случайная кликуха', description: 'Подпись возле имени, выдаётся случайная', once: true },
   { key: 'whoopee_cushion', title: 'Подушка-пердушка', description: 'Подложить на чужой профиль', once: false },
   { key: 'window', title: 'Портфель', description: 'Разбить окно на баннере чужого профиля', once: false },
+  { key: 'chalk', title: 'Мелки', description: 'Скидываются на шторы любого профиля, и своего тоже', once: false },
+  { key: 'curtains_fund', title: 'Собрано на шторы', description: 'Мелки, которые скинули на шторы вашего профиля', once: false, resetOnly: true },
   { key: 'clan_image', title: 'Своя картинка вместо эмодзи клана', description: 'Загрузить картинку на этой странице', once: true }
 ]
 
@@ -43,7 +47,8 @@ const WALLET_COLUMNS = {
   notebook_grid: 'notebookGrid',
   notebook_ruled: 'notebookRuled',
   red_pen: 'redPens',
-  corrector: 'correctors'
+  corrector: 'correctors',
+  chalk: 'balance'
 } as const
 const ITEM_KINDS: Record<string, EventItemKind> = { sticker: 'sticker', balloon: 'stain', whoopee_cushion: 'whoopee_cushion', window: 'window' }
 const ONE_OFF_KINDS: Record<string, EventItemKind> = { bell: 'bell', aura_analyzer: 'aura_analyzer', clan_image: 'clan_image' }
@@ -59,7 +64,7 @@ async function freeState(userId: string) {
       .groupBy(eventItems.kind),
     db.select({ slug: userPins.pinSlug }).from(userPins).where(and(eq(userPins.userId, userId), eq(userPins.pinSlug, ALICE_PIN.slug))),
     db.select().from(eventNicknames).where(and(eq(eventNicknames.userId, userId), sql`${eventNicknames.expiresAt} > now()`)).orderBy(desc(eventNicknames.createdAt)),
-    db.select({ aura: eventProfiles.aura }).from(eventProfiles).where(eq(eventProfiles.userId, userId))
+    db.select({ aura: eventProfiles.aura, fund: eventProfiles.curtainsFund, goal: eventProfiles.curtainsGoal }).from(eventProfiles).where(eq(eventProfiles.userId, userId))
   ])
   const countOf = (kind: EventItemKind) => items.find((i) => i.kind === kind)?.count ?? 0
   const active = nicknames.find((n) => n.id === wallet.activeNicknameId)
@@ -72,9 +77,11 @@ async function freeState(userId: string) {
       else if (item.key in ITEM_KINDS) count = countOf(ITEM_KINDS[item.key]!)
       else if (item.key in ONE_OFF_KINDS) count = Math.min(1, countOf(ONE_OFF_KINDS[item.key]!))
       else if (item.key === 'pin_aliceai') count = pinRows.length ? 1 : 0
+      else if (item.key === 'curtains_fund') count = profile[0]?.fund ?? 0
       else count = active ? 1 : 0
       if (item.key === 'nickname' && active) note = active.label
       if (item.key === 'aura_analyzer' && count) note = `аура ${profile[0]?.aura ?? 0}`
+      if (item.key === 'curtains_fund' && profile[0]) note = `цель ${profile[0].goal}`
       return { ...item, count, owned: count > 0, note }
     })
   }
@@ -95,7 +102,7 @@ async function addItems(tx: Transaction, userId: string, kind: EventItemKind, am
   if (rows.length) await tx.delete(eventItems).where(inArray(eventItems.id, rows.map((r) => r.id)))
 }
 
-const bumpProfile = async (tx: Transaction, userId: string, set: Partial<typeof eventProfiles.$inferInsert>) => {
+const bumpProfile = async (tx: Transaction, userId: string, set: PgUpdateSetSource<typeof eventProfiles>) => {
   await tx.insert(eventProfiles).values({ userId }).onConflictDoNothing()
   await tx
     .update(eventProfiles)
@@ -108,6 +115,7 @@ async function grant(user: { id: string; username: string | null }, key: string,
   if (!item) throw notFound('Нет такого предмета', 'ITEM_NOT_FOUND')
   if (item.once) amount = Math.sign(amount)
   if (amount === 0) return
+  if (item.resetOnly && amount > 0) throw badRequest('Это можно только обнулить', 'VALIDATION_ERROR')
 
   let ringBell = false
   await db.transaction(async (tx) => {
@@ -141,6 +149,10 @@ async function grant(user: { id: string; username: string | null }, key: string,
       if (kind === 'clan_image' && amount < 0) await tx.update(users).set({ avatarFileId: null, updatedAt: new Date() }).where(eq(users.id, user.id))
       return
     }
+    if (key === 'curtains_fund') {
+      await bumpProfile(tx, user.id, { curtainsFund: sql`greatest(0, ${eventProfiles.curtainsFund} + ${amount})` })
+      return
+    }
     if (key === 'pin_aliceai') {
       if (amount > 0) {
         await tx.insert(pins).values(ALICE_PIN).onConflictDoUpdate({ target: pins.slug, set: { url: ALICE_PIN.url } })
@@ -155,7 +167,7 @@ async function grant(user: { id: string; username: string | null }, key: string,
       if (amount > 0) {
         const [nickname] = await tx
           .insert(eventNicknames)
-          .values({ id: crypto.randomUUID(), userId: user.id, label: pick(NICKNAMES), styleKey: 'school', eventId: config.event.id, expiresAt: new Date(Date.now() + 30 * 86400_000) })
+          .values({ id: crypto.randomUUID(), userId: user.id, label: pick(NICKNAMES), styleKey: 'school_gold', eventId: config.event.id, expiresAt: new Date(Date.now() + 30 * 86400_000) })
           .returning()
         await tx.update(eventWallets).set({ activeNicknameId: nickname!.id }).where(eq(eventWallets.userId, user.id))
       } else {

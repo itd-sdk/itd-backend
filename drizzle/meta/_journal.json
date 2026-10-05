@@ -29,6 +29,13 @@
       "when": 1791217078255,
       "tag": "0003_event_items",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791223909389,
+      "tag": "0004_nickname_style",
+      "breakpoints": true
     }
   ]
 }

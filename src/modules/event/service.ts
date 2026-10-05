@@ -97,7 +97,7 @@ export async function buy(userId: string, itemId: string) {
       const label = NICKNAMES[Math.floor(Math.random() * NICKNAMES.length)]!
       const [nickname] = await tx
         .insert(eventNicknames)
-        .values({ id: crypto.randomUUID(), userId, label, styleKey: 'school', eventId: config.event.id, expiresAt: new Date(Date.now() + 7 * 86400_000) })
+        .values({ id: crypto.randomUUID(), userId, label, styleKey: 'school_gold', eventId: config.event.id, expiresAt: new Date(Date.now() + 7 * 86400_000) })
         .returning()
       return { balance: wallet.balance, item: { id: nickname!.id, kind: 'nickname', asset: null, label } }
     }

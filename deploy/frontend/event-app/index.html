@@ -121,6 +121,7 @@
     if (item.key === 'nickname') tell({ type: 'itd-event:profile-changed', profileId: me.id, nickname: true })
     if (item.key === 'clan_image' && amount < 0) tell({ type: 'itd-event:profile-changed', profileId: me.id, avatar: true })
     if (item.key === 'bell' && amount > 0) toast('Дзынь! Звонок прозвенел для всех онлайн')
+    else if (item.resetOnly) toast(`${item.title}: 0`)
     else toast(amount > 0 ? `Выдано: ${item.title}` : `Забрано: ${item.title}`)
   }
 
@@ -154,6 +155,10 @@
         if (item.key === 'nickname' && item.owned) actions.append(button('Другая', async () => { await change(item, -1); await change(item, 1) }))
         if (item.key === 'aura_analyzer' && item.owned) actions.append(button('Перемерить', async () => { await change(item, -1); await change(item, 1) }))
         if (item.key === 'clan_image' && item.owned) actions.append(...avatarControls())
+      } else if (item.resetOnly) {
+        const reset = button('Обнулить', () => change(item, -item.count), 'danger')
+        reset.disabled = item.count === 0
+        actions.append(reset)
       } else {
         for (const n of [1, 5, 10]) actions.append(button(`+${n}`, () => change(item, n), n === 1 ? 'primary' : ''))
         const input = document.createElement('input')
