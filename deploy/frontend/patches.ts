@@ -136,6 +136,16 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /const ([\w$]+)=[\w$]+\?"reload":"no-cache",[\w$]+=fetch\(/
     },
     {
+      // a double click on Windows selects the word with the space after it, and the red pen then refuses the
+      // selection ("одно слово без пробелов") and locks its input: drop whitespace around the selection
+      name: 'post tools: trim the selected word',
+      find: /const ([\w$]+)=([\w$]+)\.toString\(\)\.length,([\w$]+)=([\w$]+)\.toString\(\),([\w$]+)=\1\+\3\.length;if\(([\w$]+)\.slice\(\1,\5\)!==\3\)return;/g,
+      replace: (_, start, prefix, text, range, end, source) =>
+        `let ${start}=${prefix}.toString().length,${text}=${range}.toString();${start}+=${text}.length-${text}.trimStart().length;${text}=${text}.trim();` +
+        `const ${end}=${start}+${text}.length;if(!${text}||${source}.slice(${start},${end})!==${text})return;`,
+      done: /\.trimStart\(\)\.length;[\w$]+=[\w$]+\.trim\(\);const [\w$]+=/
+    },
+    {
       // banners could only be drawn: a picture from disk goes through the same save as a drawn one (data URL)
       name: 'profile: upload a banner picture',
       find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
