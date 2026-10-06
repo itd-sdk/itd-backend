@@ -35,6 +35,7 @@ const WINDOW_BROKEN_MS = 60 * 60_000
 const BALLOON_TTL_MS = 10 * 60_000
 const MARK_TTL_MS = 24 * 60 * 60_000
 const RED_PEN_LIMIT = 3
+const CORRECTOR_LIMIT = 3
 const MAX_WEAR = 4
 
 export const eventDisabled = () => new ApiError(403, 'EVENT_DISABLED', 'Ивент сейчас не проводится')
@@ -530,9 +531,18 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
   const [post] = await db.select().from(posts).where(eq(posts.id, input.postId))
   if (!post || post.deletedAt) throw notFound('Post not found')
   if (revisionOf(post.content) !== input.revision) throw new ApiError(409, 'STALE_REVISION', 'Пост изменился. Обновите страницу')
+  if (post.authorId === userId) throw forbidden(tool === 'red_pen' ? 'Свой пост исправлять нельзя' : 'Свой пост закрашивать нельзя')
   const length = post.content.length
-  if (input.start < 0 || input.end <= input.start || input.end > length || input.end - input.start > 200) throw badRequest('Некорректный фрагмент текста', 'INVALID_RANGE')
-  if (tool === 'red_pen' && !input.replacement?.trim()) throw badRequest('Нужен текст исправления', 'VALIDATION_ERROR')
+  if (input.start < 0 || input.end <= input.start || input.end > length) throw badRequest('Некорректный фрагмент текста', 'INVALID_RANGE')
+
+  const active = await db
+    .select()
+    .from(postMarks)
+    .where(and(eq(postMarks.postId, post.id), eq(postMarks.revision, input.revision), isNull(postMarks.canceledAt)))
+  const marks = active.filter((m) => m.kind === 'corrector' && m.createdAt.getTime() > Date.now() - MARK_TTL_MS)
+  const corrections = active.filter((m) => m.kind === 'red_pen')
+  const partly = (m: { start: number; end: number }) => m.start < input.end && m.end > input.start && (m.start !== input.start || m.end !== input.end)
+  checkToolRange(tool, post, input, { marks, corrections, partly, userId })
 
   return db.transaction(async (tx) => {
     const column = tool === 'red_pen' ? eventWallets.redPens : eventWallets.correctors
@@ -558,6 +568,22 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
             .orderBy(asc(postMarks.createdAt))
         : []
     if (claim.length >= RED_PEN_LIMIT) throw badRequest(`Вы уже исправили ${RED_PEN_LIMIT} слов`, 'RED_PEN_LIMIT')
+    if (tool === 'corrector') {
+      const [{ used }] = await tx
+        .select({ used: sql<number>`count(*)::int` })
+        .from(postMarks)
+        .where(
+          and(
+            eq(postMarks.postId, post.id),
+            eq(postMarks.kind, 'corrector'),
+            eq(postMarks.authorId, userId),
+            eq(postMarks.revision, input.revision),
+            isNull(postMarks.canceledAt),
+            gt(postMarks.createdAt, sql`now() - interval '1 day'`)
+          )
+        )
+      if (used >= CORRECTOR_LIMIT) throw badRequest(`На этом посте вы уже использовали ${CORRECTOR_LIMIT} корректора`, 'CORRECTOR_LIMIT')
+    }
     if (claim.length === 0) {
       const [wallet] = await tx
         .update(eventWallets)
@@ -581,6 +607,52 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
       .returning()
     return { success: true, id: mark!.id, claimId: claim[0]?.id ?? mark!.id }
   })
+}
+
+/*
+ * The same rules as the web client applies before sending (its messages too): a red pen replaces one whole word
+ * with another word of up to 10 letters, a corrector paints 1-10 non-space characters.
+ */
+const WORD = /^[\p{L}\p{M}]+(?:[-'’][\p{L}\p{M}]+)*$/u
+const WORD_CHAR = /[\p{L}\p{M}\p{N}_'’-]/u
+const MAX_WORD = 10
+const graphemes = new Intl.Segmenter('ru', { granularity: 'grapheme' })
+const graphemeCount = (text: string) => [...graphemes.segment(text)].length
+
+type MarkRow = typeof postMarks.$inferSelect
+function checkToolRange(
+  tool: Tool,
+  post: { content: string; spans: { type: string; offset: number; length: number }[] },
+  input: { start: number; end: number; replacement?: string },
+  state: { marks: MarkRow[]; corrections: MarkRow[]; partly: (m: MarkRow) => boolean; userId: string }
+) {
+  const selected = post.content.slice(input.start, input.end)
+  const invalid = (message: string) => badRequest(message, 'INVALID_RANGE')
+  if (tool === 'corrector') {
+    const count = [...graphemes.segment(selected)].filter((g) => !/^\s+$/u.test(g.segment)).length
+    if (count < 1 || count > 10) throw invalid('Выберите от 1 до 10 символов без учёта пробелов')
+    if (state.marks.some((m) => m.authorId === state.userId && m.start === input.start && m.end === input.end)) throw invalid('Вы уже закрасили этот фрагмент')
+    if (state.marks.some(state.partly)) throw invalid('Выделите весь закрашенный фрагмент')
+    if (state.corrections.some(state.partly)) throw invalid('Выделите всё исправленное слово')
+    return
+  }
+  if (!WORD.test(selected)) throw invalid('Выделите одно слово без пробелов')
+  const before = Array.from(post.content.slice(0, input.start)).at(-1) ?? ''
+  const after = Array.from(post.content.slice(input.end))[0] ?? ''
+  if (WORD_CHAR.test(before) || WORD_CHAR.test(after)) throw invalid('Выделите слово целиком')
+  const hidden = ['link', 'mention', 'hashtag', 'spoiler']
+  if (post.spans.some((s) => hidden.includes(s.type) && s.offset < input.end && s.offset + s.length > input.start)) {
+    throw invalid('Ссылки, упоминания и скрытый текст исправлять нельзя')
+  }
+  if (state.marks.some(state.partly)) throw invalid('Выделите весь закрашенный фрагмент')
+  if (state.corrections.some(state.partly)) throw invalid('Выделите всё исправленное слово')
+
+  const replacement = input.replacement ?? ''
+  const sameRange = state.corrections.filter((m) => m.start === input.start && m.end === input.end)
+  if (sameRange.some((m) => m.replacement === replacement)) throw invalid('Это слово уже так исправлено')
+  if (!WORD.test(replacement)) throw badRequest('Введите одно слово без пробелов', 'INVALID_REPLACEMENT')
+  if (graphemeCount(replacement) > MAX_WORD) throw badRequest(`Не больше ${MAX_WORD} символов`, 'INVALID_REPLACEMENT')
+  if (!sameRange.length && replacement.normalize('NFC') === selected.normalize('NFC')) throw badRequest('Введите другое слово', 'INVALID_REPLACEMENT')
 }
 
 export async function cancelTool(userId: string, tool: Tool, postId: string, markId?: string) {

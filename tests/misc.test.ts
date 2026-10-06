@@ -445,6 +445,40 @@ describe('event', () => {
     expect(left.corrections).toHaveLength(1)
   })
 
+  test('red pen and corrector accept only what the web client allows', async () => {
+    const author = await createUser()
+    const editor = await createUser()
+    const post = await createPost(author, 'превет мир, как-то так hello')
+    await db.execute(sql`insert into event_wallets (user_id, red_pens, correctors) values (${editor.id}, 5, 5), (${author.id}, 5, 5)`)
+    const revision = (await api('GET', `/red-pens/state?ids=${post.id}`, { token: editor.token })).body.data[post.id].revision
+    const pen = (start: number, end: number, replacement: string, user = editor) =>
+      api('POST', '/red-pens/apply', { token: user.token, body: { postId: post.id, revision, start, end, replacement } })
+    const paint = (start: number, end: number, user = editor) => api('POST', '/correctors/apply', { token: user.token, body: { postId: post.id, revision, start, end } })
+    const error = async (res: Promise<{ body: any }>) => (await res).body.error?.message
+
+    expect(await error(pen(0, 10, 'привет'))).toBe('Выделите одно слово без пробелов')
+    expect(await error(pen(0, 7, 'привет'))).toBe('Выделите одно слово без пробелов')
+    expect(await error(pen(1, 6, 'ривет'))).toBe('Выделите слово целиком')
+    expect(await error(pen(0, 6, 'при вет'))).toBe('Введите одно слово без пробелов')
+    expect(await error(pen(0, 6, 'привет!'))).toBe('Введите одно слово без пробелов')
+    expect(await error(pen(0, 6, 'приииииииивет'))).toBe('Не больше 10 символов')
+    expect(await error(pen(0, 6, 'превет'))).toBe('Введите другое слово')
+    expect(await error(pen(0, 6, 'привет', author))).toBe('Свой пост исправлять нельзя')
+    // words with a hyphen and latin words are fine
+    expect((await pen(12, 18, 'как-нибудь')).body.success).toBe(true)
+    expect((await pen(23, 28, 'hi')).body.success).toBe(true)
+    expect(await error(pen(12, 18, 'как-нибудь'))).toBe('Это слово уже так исправлено')
+
+    expect(await error(paint(0, 20))).toBe('Выберите от 1 до 10 символов без учёта пробелов')
+    expect(await error(paint(12, 15))).toBe('Выделите всё исправленное слово')
+    expect((await paint(0, 6)).body.success).toBe(true)
+    expect(await error(paint(0, 6))).toBe('Вы уже закрасили этот фрагмент')
+    expect(await error(paint(0, 3))).toBe('Выделите весь закрашенный фрагмент')
+    await paint(7, 10)
+    await paint(19, 22)
+    expect((await paint(23, 28)).body.error.code).toBe('CORRECTOR_LIMIT')
+  })
+
   test('posts carry their red pen and corrector state', async () => {
     const author = await createUser()
     const editor = await createUser()
