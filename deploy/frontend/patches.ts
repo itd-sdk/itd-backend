@@ -165,7 +165,7 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
         const link = (href: string, text: string) => `${h}("li",{children:${h}("a",{href:"${href}",target:"_blank",rel:"noopener noreferrer",children:"${text}"})})`
         return (
           `${h}("ul",{className:${c}.legalLinks,children:[${h}("li",{children:${h}("a",{href:"/privacy",children:"О проекте"})}),` +
-          `${link('https://t.me/openitd', 'Telegram проекта')}]})`
+          `${link('https://t.me/openitd', 'Наш Telegram')}]})`
         )
       },
       done: /children:"О проекте"\}\)\}\),[\w$]+\("li",\{children:[\w$]+\("a",\{href:"https:\/\/t\.me\/openitd"/

@@ -21,3 +21,9 @@ span[data-icon="liked"] + span {
   fill: #000 !important;
   stroke: #000 !important;
 }
+
+/* posts and profiles: the page column (layout wrapper) was 650px; the shop and event pages keep their own width */
+.gOfR:not(.GoKB):not(.Wbj4) {
+  width: min(720px, 100%) !important;
+  max-width: 720px !important;
+}

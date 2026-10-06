@@ -272,6 +272,61 @@ itd-frontend их стоит проверить.
 Проверка: `curl -s https://ВАШ.ДОМЕН/api/v1/portal` → `{"active":true,...,"url":"/public/events/aliceai/"}`,
 в меню появляется «Ивент», `/event/alice-ai` открывает мини-приложение во фрейме.
 
+## Скорость и Cloudflare
+
+Сборка кладёт рядом с js/css/svg готовые `.gz` и `.br`: nginx отдаёт их сам (`gzip_static on` в
+`deploy/nginx/itd.conf`), Caddy — через `precompressed br gzip`. Если nginx настраивали раньше, добавьте в
+`server { … }` строку `gzip_static on;` и `text/javascript` в `gzip_types`, затем `sudo nginx -t && sudo systemctl reload nginx`.
+
+Что медленно, видно в браузере: F12 → Network → обновить страницу. Долгие `/api/...` — это backend или база,
+долгие `/assets/...` — канал сервера; тогда поможет Cloudflare.
+
+**Cloudflare** (бесплатного тарифа хватает):
+
+1. Добавьте домен в Cloudflare и включите проксирование (оранжевое облако) у записи `openitd`.
+2. SSL/TLS → режим **Full (strict)**: сертификат Let's Encrypt на сервере остаётся.
+3. Caching → Cache Rules → правило «Eligible for cache» для `URI Path starts with /assets/` (и `/cdn/`),
+   Edge TTL «Use cache-control header». Файлы там с хэшем в имени и `immutable`, их можно кэшировать вечно.
+   `/api/*` и `index.html` не кэшируйте: у них `no-cache`, Cloudflare их и так не держит.
+4. Speed → Optimization: включите Brotli (если есть), HTTP/3, Early Hints. **Rocket Loader не включайте** —
+   он ломает модульные скрипты веб-клиента.
+5. Обязательно — настоящие IP пользователей. Иначе backend видит у всех адрес Cloudflare, и лимиты запросов
+   срабатывают на всех сразу. В nginx внутри `server { … }`:
+
+   ```nginx
+   # адреса Cloudflare: https://www.cloudflare.com/ips/
+   set_real_ip_from 173.245.48.0/20;
+   set_real_ip_from 103.21.244.0/22;
+   set_real_ip_from 103.22.200.0/22;
+   set_real_ip_from 103.31.4.0/22;
+   set_real_ip_from 141.101.64.0/18;
+   set_real_ip_from 108.162.192.0/18;
+   set_real_ip_from 190.93.240.0/20;
+   set_real_ip_from 188.114.96.0/20;
+   set_real_ip_from 197.234.240.0/22;
+   set_real_ip_from 198.41.128.0/17;
+   set_real_ip_from 162.158.0.0/15;
+   set_real_ip_from 104.16.0.0/13;
+   set_real_ip_from 104.24.0.0/14;
+   set_real_ip_from 172.64.0.0/13;
+   set_real_ip_from 131.0.72.0/22;
+   set_real_ip_from 2400:cb00::/32;
+   set_real_ip_from 2606:4700::/32;
+   set_real_ip_from 2803:f800::/32;
+   set_real_ip_from 2405:b500::/32;
+   set_real_ip_from 2405:8100::/32;
+   set_real_ip_from 2a06:98c0::/29;
+   set_real_ip_from 2c0f:f248::/32;
+   real_ip_header CF-Connecting-IP;
+   ```
+
+   `$remote_addr`, который nginx передаёт backend, станет адресом пользователя. Список адресов Cloudflare
+   иногда меняется — сверяйтесь со страницей по ссылке.
+
+Ограничения бесплатного Cloudflare: файл больше **100 МБ** не загрузится (видео до 200 МБ — только в обход
+Cloudflare или уменьшите `MAX_VIDEO_SIZE_MB`); соединение без данных рвётся через 100 секунд — поток
+уведомлений шлёт ping каждые 15 секунд, так что ему это не мешает.
+
 ## Обновление
 
 ```bash

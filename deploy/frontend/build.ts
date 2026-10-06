@@ -15,6 +15,7 @@
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
 import { createHash } from 'node:crypto'
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib'
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -614,6 +615,25 @@ const info = {
   warnings
 }
 await writeFile(join(OUT, 'build-info.json'), JSON.stringify(info, null, 2))
+
+// precompressed copies (nginx gzip_static, Caddy precompressed): a weak server no longer compresses
+// the bundle on every request
+const COMPRESSIBLE = /\.(?:js|css|html|svg|json|webmanifest|txt|xml)$/i
+let compressed = 0
+async function precompress(dir: string) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) await precompress(path)
+    else if (COMPRESSIBLE.test(entry.name)) {
+      const body = await readFile(path)
+      if (body.length < 1024) continue
+      await writeFile(`${path}.gz`, gzipSync(body, { level: 9 }))
+      await writeFile(`${path}.br`, brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 } }))
+      compressed++
+    }
+  }
+}
+await precompress(OUT)
 // replace the contents but keep the directory itself: a running Caddy container bind-mounts it
 await mkdir(TARGET, { recursive: true })
 for (const entry of await readdir(TARGET)) await rm(join(TARGET, entry), { recursive: true, force: true })
@@ -622,6 +642,7 @@ await rm(OUT, { recursive: true, force: true })
 
 console.log(`\nbuilt ${TARGET}`)
 console.log(`  entry ${entry}, ${bundle.size} js/css files, ${staticRefs.size - missingStatic}/${staticRefs.size} static files, ${mirrored} cdn files, ${icons.mirrored} icons`)
+console.log(`  precompressed ${compressed} files (.gz, .br)`)
 console.log(`  patched: sentry ${stats.sentry}, cdn urls ${stats.cdn}, telegram ${Object.values(stats.telegram).reduce((a, b) => a + b, 0)} (bot @${BOT})`)
 if (removed.length) console.log(`  removed scripts: ${removed.join(', ')}`)
 if (warnings.length) console.log(`  ${warnings.length} warning(s), see build-info.json`)
