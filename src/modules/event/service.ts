@@ -34,6 +34,7 @@ export const NICKNAMES = ['Отличник', 'Двоечник', 'Старос�
 const WINDOW_BROKEN_MS = 60 * 60_000
 const BALLOON_TTL_MS = 10 * 60_000
 const MARK_TTL_MS = 24 * 60 * 60_000
+const RED_PEN_LIMIT = 3
 const MAX_WEAR = 4
 
 export const eventDisabled = () => new ApiError(403, 'EVENT_DISABLED', 'Ивент сейчас не проводится')
@@ -453,7 +454,15 @@ export async function toolState(viewerId: string | null, tool: Tool, postIds: st
     db
       .select()
       .from(postMarks)
-      .where(and(inArray(postMarks.postId, unique), eq(postMarks.kind, tool), isNull(postMarks.canceledAt), gt(postMarks.createdAt, sql`now() - interval '1 day'`)))
+      // corrector marks fade after a day, red pen claims last until the event ends
+      .where(
+        and(
+          inArray(postMarks.postId, unique),
+          eq(postMarks.kind, tool),
+          isNull(postMarks.canceledAt),
+          tool === 'corrector' ? gt(postMarks.createdAt, sql`now() - interval '1 day'`) : undefined
+        )
+      )
       .orderBy(asc(postMarks.createdAt))
   ])
   const { briefs } = await loadBriefs(marks.map((m) => m.authorId))
@@ -475,23 +484,44 @@ export async function toolState(viewerId: string | null, tool: Tool, postIds: st
       isOwner: m.authorId === viewerId,
       actor: briefs.get(m.authorId) ?? null
     })
-    // how many the viewer already used on this post (the client allows 3)
-    const used = own.filter((m) => m.authorId === viewerId).length
     const serverTime = new Date().toISOString()
-    data[id] =
-      tool === 'corrector'
-        ? { revision: revisionOf(post.content), serverTime, marks: own.map(render), events: eventsList().map((e) => ({ ...e, used })) }
-        : {
-            revision: revisionOf(post.content),
-            serverTime,
-            claims: own.map((m) => ({
-              ...render(m),
-              used: own.filter((o) => o.authorId === m.authorId).length,
-              corrections: [{ start: m.start, end: m.end, replacement: m.replacement ?? '' }]
-            })),
-            corrections: own.map((m) => ({ id: m.id, start: m.start, end: m.end, replacement: m.replacement ?? '', createdAt: m.createdAt.toISOString() })),
-            events: eventsList()
-          }
+    if (tool === 'corrector') {
+      // how many the viewer already used on this post (the client allows 3)
+      const used = own.filter((m) => m.authorId === viewerId).length
+      data[id] = { revision: revisionOf(post.content), serverTime, events: eventsList().map((e) => ({ ...e, used })), marks: own.map(render) }
+      continue
+    }
+    // one claim per user and post, holding up to RED_PEN_LIMIT corrections; its id is the id of its first correction
+    const byAuthor = new Map<string, (typeof own)[number][]>()
+    for (const m of own) byAuthor.set(m.authorId, [...(byAuthor.get(m.authorId) ?? []), m])
+    const endsAt = eventEndsAt().toISOString()
+    const claims = [...byAuthor.entries()].map(([authorId, list]) => {
+      const actor = briefs.get(authorId)
+      return {
+        id: list[0]!.id,
+        eventId: list[0]!.eventId,
+        endsAt,
+        used: list.length,
+        limit: RED_PEN_LIMIT,
+        isOwner: authorId === viewerId,
+        actor: actor ? { id: actor.id, username: actor.username, displayName: actor.displayName } : null
+      }
+    })
+    data[id] = {
+      revision: revisionOf(post.content),
+      serverTime,
+      events: eventsList(),
+      claim: claims.find((c) => c.isOwner) ?? claims[0] ?? null,
+      claims,
+      corrections: own.map((m) => ({
+        id: m.id,
+        start: m.start,
+        end: m.end,
+        replacement: m.replacement ?? '',
+        createdAt: m.createdAt.toISOString(),
+        createdAtMicros: m.createdAt.getTime() * 1000
+      }))
+    }
   }
   return { data, serverTime: new Date().toISOString() }
 }
@@ -507,12 +537,35 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
   return db.transaction(async (tx) => {
     const column = tool === 'red_pen' ? eventWallets.redPens : eventWallets.correctors
     await tx.insert(eventWallets).values({ userId }).onConflictDoNothing()
-    const [wallet] = await tx
-      .update(eventWallets)
-      .set({ [tool === 'red_pen' ? 'redPens' : 'correctors']: sql`${column} - 1` })
-      .where(and(eq(eventWallets.userId, userId), sql`${column} > 0`))
-      .returning()
-    if (!wallet) throw badRequest(tool === 'red_pen' ? 'Нет красных ручек' : 'Нет корректоров', 'INSUFFICIENT_BALANCE')
+    // the wallet row lock also serializes the claim check below
+    await tx.select({ userId: eventWallets.userId }).from(eventWallets).where(eq(eventWallets.userId, userId)).for('update')
+
+    // a red pen opens a claim on the post: up to RED_PEN_LIMIT corrections for one pen
+    const claim =
+      tool === 'red_pen'
+        ? await tx
+            .select({ id: postMarks.id })
+            .from(postMarks)
+            .where(
+              and(
+                eq(postMarks.postId, post.id),
+                eq(postMarks.kind, 'red_pen'),
+                eq(postMarks.authorId, userId),
+                eq(postMarks.revision, input.revision),
+                isNull(postMarks.canceledAt)
+              )
+            )
+            .orderBy(asc(postMarks.createdAt))
+        : []
+    if (claim.length >= RED_PEN_LIMIT) throw badRequest(`Вы уже исправили ${RED_PEN_LIMIT} слов`, 'RED_PEN_LIMIT')
+    if (claim.length === 0) {
+      const [wallet] = await tx
+        .update(eventWallets)
+        .set({ [tool === 'red_pen' ? 'redPens' : 'correctors']: sql`${column} - 1` })
+        .where(and(eq(eventWallets.userId, userId), sql`${column} > 0`))
+        .returning()
+      if (!wallet) throw badRequest(tool === 'red_pen' ? 'Нет красных ручек' : 'Нет корректоров', 'INSUFFICIENT_BALANCE')
+    }
     const [mark] = await tx
       .insert(postMarks)
       .values({
@@ -526,11 +579,18 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
         replacement: tool === 'red_pen' ? input.replacement!.slice(0, 200) : null
       })
       .returning()
-    return { success: true, id: mark!.id, claimId: mark!.id }
+    return { success: true, id: mark!.id, claimId: claim[0]?.id ?? mark!.id }
   })
 }
 
 export async function cancelTool(userId: string, tool: Tool, postId: string, markId?: string) {
+  // a red pen claim is all corrections of its author on the post
+  let claimAuthor: string | undefined
+  if (tool === 'red_pen' && markId) {
+    const [mark] = await db.select({ authorId: postMarks.authorId }).from(postMarks).where(and(eq(postMarks.id, markId), eq(postMarks.postId, postId)))
+    if (!mark) throw notFound('Правка не найдена', 'MARK_NOT_FOUND')
+    claimAuthor = mark.authorId
+  }
   const rows = await db
     .update(postMarks)
     .set({ canceledAt: new Date() })
@@ -539,7 +599,7 @@ export async function cancelTool(userId: string, tool: Tool, postId: string, mar
         eq(postMarks.postId, postId),
         eq(postMarks.kind, tool),
         isNull(postMarks.canceledAt),
-        markId ? eq(postMarks.id, markId) : undefined,
+        claimAuthor ? eq(postMarks.authorId, claimAuthor) : markId ? eq(postMarks.id, markId) : undefined,
         // the post author may clean up marks of others, everyone else only their own
         sql`(${postMarks.authorId} = ${userId} or exists (select 1 from posts p where p.id = ${postMarks.postId} and p.author_id = ${userId}))`
       )

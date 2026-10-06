@@ -16,4 +16,4 @@ export function safeEqual(a: string | Buffer, b: string | Buffer) {
 export const randomOtp = (digits = 6) => String(randomInt(0, 10 ** digits)).padStart(digits, '0')
 
 /** Short content hash: red pens and correctors are bound to the text they were applied to */
-export const contentRevision = (content: string) => sha256(content).slice(0, 16)
+export const contentRevision = (content: string) => sha256(content)
