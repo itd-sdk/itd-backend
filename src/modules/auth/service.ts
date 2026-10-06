@@ -4,7 +4,7 @@ import { config } from '../../config'
 import { db, type Executor } from '../../db/client'
 import { accounts, type Role, sessions, users } from '../../db/schema'
 import { ApiError, badRequest, unauthorized } from '../../lib/errors'
-import { randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
+import { randomHexToken, randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
 import { signAccessToken } from '../../lib/jwt'
 import { normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
 import { addDays, iso } from '../../lib/time'
@@ -55,7 +55,7 @@ export async function liftExpiredBan(account: AccountRow) {
 // ---------------------------------------------------------------- sessions
 
 export async function createSession(account: Pick<AccountRow, 'id' | 'roles'>, ctx: ClientContext, executor: Executor = db) {
-  const refreshToken = randomToken(48)
+  const refreshToken = randomHexToken()
   const device = parseUserAgent(ctx.userAgent)
   const [session] = await executor
     .insert(sessions)
@@ -105,7 +105,7 @@ export async function refreshSession(refreshToken: string | undefined, ctx: Clie
   if (rotate) {
     // grace first, then a compare-and-swap: of two concurrent refreshes only one rotates, the other keeps its cookie
     await redis.set(rk('sess', 'grace', hash), session.id, 'EX', REFRESH_GRACE_SECONDS)
-    const candidate = randomToken(48)
+    const candidate = randomHexToken()
     const rotated = await db
       .update(sessions)
       .set({

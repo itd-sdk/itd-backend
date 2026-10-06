@@ -2,6 +2,9 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 
 export const randomToken = (bytes = 32) => randomBytes(bytes).toString('base64url')
 
+/** Refresh token as the official server issues it: 64 lowercase hex characters */
+export const randomHexToken = (bytes = 32) => randomBytes(bytes).toString('hex')
+
 export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
 export const hmac = (secret: string, value: string | Buffer) => createHmac('sha256', secret).update(value).digest()

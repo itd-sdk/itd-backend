@@ -147,6 +147,8 @@ describe('sign-in & tokens', () => {
     expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200])
     const issued = results.map((r) => r.cookies.refresh_token).filter(Boolean)
     expect(issued).toHaveLength(1)
+    // the format of the official server: 64 lowercase hex characters, for sign-in and rotation alike
+    for (const token of [user.refresh, issued[0]]) expect(token).toMatch(/^[0-9a-f]{64}$/)
     expect((await api('POST', '/v1/auth/refresh', { cookie: `refresh_token=${issued[0]}` })).status).toBe(200)
   })
 
