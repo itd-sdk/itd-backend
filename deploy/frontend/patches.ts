@@ -164,12 +164,11 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       replace: (_, h, c) => {
         const link = (href: string, text: string) => `${h}("li",{children:${h}("a",{href:"${href}",target:"_blank",rel:"noopener noreferrer",children:"${text}"})})`
         return (
-          `${h}("ul",{className:${c}.legalLinks,children:[${h}("li",{children:${h}("a",{href:"/privacy",children:"Об этом сайте"})}),` +
-          `${link('https://t.me/openitd', 'Канал проекта @openitd')},${link('https://t.me/nwokez', 'Связь: @nwokez')}]}),` +
-          `${h}("span",{className:${c}.copyright,children:"Неофициальная копия для тестов. Бэкенд сгенерирован ИИ"})`
+          `${h}("ul",{className:${c}.legalLinks,children:[${h}("li",{children:${h}("a",{href:"/privacy",children:"О проекте"})}),` +
+          `${link('https://t.me/openitd', 'Telegram проекта')}]})`
         )
       },
-      done: /children:"Неофициальная копия для тестов\. Бэкенд сгенерирован ИИ"/
+      done: /children:"О проекте"\}\)\}\),[\w$]+\("li",\{children:[\w$]+\("a",\{href:"https:\/\/t\.me\/openitd"/
     },
     {
       name: 'sign-up: no terms of use',
@@ -210,7 +209,10 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
               '5. Данные пользователей',
               'Для работы Сайта хранятся ник в Telegram, хэш пароля, опубликованные материалы и технические сведения о сессиях (IP-адрес, сведения об устройстве). Не размещайте на Сайте персональные данные и сведения, утрата или раскрытие которых для вас нежелательны.'
             ),
-            section('6. Сведения о разработке', 'Серверная часть (бэкенд) Сайта сгенерирована с помощью искусственного интеллекта.'),
+            section(
+              '6. Сведения о разработке',
+              'Серверная часть (бэкенд) Сайта сгенерирована с помощью искусственного интеллекта. Клиентская часть (фронтенд) Сайта представляет собой декомпилированный бандл, полученный с сайта оригинальной социальной сети.'
+            ),
             section(
               '7. Контактная информация',
               `["Канал проекта в Telegram: ",${tg('openitd')},"."]`,
