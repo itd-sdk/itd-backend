@@ -158,6 +158,70 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /title:"Загрузить баннер"/
     },
     {
+      // no ITD copyright and legal documents: the page about this copy, the project's channel and its author instead
+      name: 'sidebar: project links instead of legal ones',
+      find: /([\w$]+)\("ul",\{className:([\w$]+)\.legalLinks,children:\[\1\("li",\{children:\1\("a",\{href:"https:\/\/статус\.итд\.com"[\s\S]*?children:"Политика Cookies"\}\)\}\)\]\}\),\1\("span",\{className:\2\.copyright,children:"© 2026 ООО «ИТД»"\}\)/g,
+      replace: (_, h, c) => {
+        const link = (href: string, text: string) => `${h}("li",{children:${h}("a",{href:"${href}",target:"_blank",rel:"noopener noreferrer",children:"${text}"})})`
+        return (
+          `${h}("ul",{className:${c}.legalLinks,children:[${h}("li",{children:${h}("a",{href:"/privacy",children:"Об этом сайте"})}),` +
+          `${link('https://t.me/openitd', 'Канал проекта @openitd')},${link('https://t.me/nwokez', 'Связь: @nwokez')}]}),` +
+          `${h}("span",{className:${c}.copyright,children:"Неофициальная копия для тестов. Бэкенд сгенерирован ИИ"})`
+        )
+      },
+      done: /children:"Неофициальная копия для тестов\. Бэкенд сгенерирован ИИ"/
+    },
+    {
+      name: 'sign-up: no terms of use',
+      find: /children:\["Продолжая, вы соглашаетесь с"," ",([\w$]+)\("a",\{href:"\/terms",target:"_blank",rel:"noopener noreferrer",children:"условиями использования"\}\)," и"," ",\1\("a",\{href:"\/privacy",target:"_blank",rel:"noopener noreferrer",children:"политикой конфиденциальности"\}\)\]/g,
+      replace: (_, h) =>
+        `children:["Это неофициальная копия для тестов. Продолжая, вы подтверждаете, что ознакомились с"," ",${h}("a",{href:"/privacy",target:"_blank",rel:"noopener noreferrer",children:"информацией о сайте"})]`,
+      done: /"информацией о сайте"/
+    },
+    {
+      name: 'privacy page: about this copy',
+      find: /(([\w$]+)\("h1",\{className:([\w$]+)\.title,children:)"Политика конфиденциальности"\}\),[\s\S]*?children:"privacy@itd\.fun"\}\)\]\}\)\]\}\)/g,
+      replace: (_, h1, h, c) => {
+        const section = (title: string, ...paragraphs: string[]) =>
+          `${h}("section",{className:${c}.section,children:[${h}("h2",{className:${c}.sectionTitle,children:${JSON.stringify(title)}}),` +
+          paragraphs.map((text) => `${h}("p",{className:${c}.text,children:${text.startsWith('[') ? text : JSON.stringify(text)}})`).join(',') +
+          ']})'
+        const tg = (name: string) => `${h}("a",{href:"https://t.me/${name}",target:"_blank",rel:"noopener noreferrer",className:${c}.contact,children:"@${name}"})`
+        return (
+          `${h1}"Политика конфиденциальности"}),${h}("p",{className:${c}.updated,children:"Последнее обновление: 6 октября 2026"}),` +
+          [
+            section(
+              '1. Общие положения',
+              'Настоящий сайт (далее — «Сайт») является неофициальной копией социальной сети «итд». Сайт не связан с ООО «ИТД», не одобрен им и не поддерживается им.'
+            ),
+            section(
+              '2. Права на объекты интеллектуальной собственности',
+              'Все права на дизайн, интерфейс, наименования, логотипы, графические материалы и иные объекты интеллектуальной собственности социальной сети «итд» принадлежат ООО «ИТД». Администрация Сайта не претендует на указанные права.'
+            ),
+            section(
+              '3. Назначение Сайта',
+              'Сайт предназначен исключительно для тестирования и экспериментов. Сайт не является средством связи и не может использоваться для общения, а также для передачи личной или иной значимой информации.'
+            ),
+            section(
+              '4. Ограничение ответственности',
+              'Сайт предоставляется «как есть». Администрация не гарантирует бесперебойную работу Сайта и не несёт ответственности за сохранность аккаунтов, публикаций, комментариев, файлов и иных данных, а также за их утрату, изменение или раскрытие. Любые данные могут быть удалены в любой момент без предварительного уведомления.'
+            ),
+            section(
+              '5. Данные пользователей',
+              'Для работы Сайта хранятся ник в Telegram, хэш пароля, опубликованные материалы и технические сведения о сессиях (IP-адрес, сведения об устройстве). Не размещайте на Сайте персональные данные и сведения, утрата или раскрытие которых для вас нежелательны.'
+            ),
+            section('6. Сведения о разработке', 'Серверная часть (бэкенд) Сайта сгенерирована с помощью искусственного интеллекта.'),
+            section(
+              '7. Контактная информация',
+              `["Канал проекта в Telegram: ",${tg('openitd')},"."]`,
+              `["Связь с автором: ",${tg('nwokez')},"."]`
+            )
+          ].join(',')
+        )
+      },
+      done: /"Серверная часть \(бэкенд\) Сайта сгенерирована с помощью искусственного интеллекта\."/
+    },
+    {
       // a source patched for another bot
       name: 'bot username',
       find: new RegExp(`(t\\.me/|@)(?!${bot}\\b)\\w+_bot\\b(?=[" ])`, 'g'),
