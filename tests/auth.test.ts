@@ -193,6 +193,12 @@ describe('passwords', () => {
     expect((await api('GET', '/users/me', { token: other.body.accessToken })).status).toBe(401)
     expect((await api('GET', '/users/me', { token: user.token })).status).toBe(200)
     expect((await api('POST', '/v1/auth/sign-in', { body: { telegram: user.telegram, password: 'brand-new-password' } })).status).toBe(200)
+
+    // the web client names the old password currentPassword
+    const web = await api('POST', '/v1/auth/change-password', { token: user.token, body: { currentPassword: 'brand-new-password', newPassword: 'third-new-password' } })
+    expect(web.body.success).toBe(true)
+    const missing = await api('POST', '/v1/auth/change-password', { token: user.token, body: { newPassword: 'fourth-password!' } })
+    expect(missing.body.error.code).toBe('VALIDATION_ERROR')
   })
 
   test('forgot + reset password with a code', async () => {

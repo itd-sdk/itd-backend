@@ -33,6 +33,17 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /children:"Telegram"\}\),\w+\("input",\{type:"text",autoComplete:"username"/
     },
     text('ilya@gmail\\.com', '@username', 'login placeholder'),
+    {
+      // "@" is a fixed prefix on the left (like Flutter's prefixIcon): it cannot be erased, and a typed one is dropped
+      name: 'login field: @ prefix',
+      find: /(\w+)\("input",\{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false,className:(`[^`]*`),value:([\w$]+),onInput:([\w$]+=>\{[^}]*\}),placeholder:"@username",disabled:([\w$]+)\}\)/g,
+      replace: (_, h, cls, value, onInput, disabled) =>
+        `${h}("div",{style:{position:"relative"},children:[` +
+        `${h}("span",{"aria-hidden":"true",style:{position:"absolute",left:17,top:"50%",transform:"translateY(-50%)",fontSize:16,lineHeight:1,color:"var(--text-secondary)",pointerEvents:"none"},children:"@"}),` +
+        `${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false,className:${cls},style:{paddingLeft:35},value:${value},` +
+        `onInput:ev=>{ev.target.value=ev.target.value.replace(/^@+/,"");(${onInput})(ev)},placeholder:"username",disabled:${disabled}})]})`,
+      done: /placeholder:"username",disabled:/
+    },
     text('Введите email', 'Введите ник в Telegram', 'empty login message'),
     text('Этот email уже зарегистрирован', 'Этот Telegram уже зарегистрирован', 'taken login message'),
     text('Неверный email или пароль', 'Неверный ник Telegram или пароль', 'invalid credentials message'),

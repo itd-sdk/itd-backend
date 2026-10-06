@@ -219,7 +219,7 @@ describe('event items (free stub shop)', () => {
     const initial = (await api('GET', '/v1/aliceai/free', { token: user.token })).body
     expect(initial.enabled).toBe(true)
     expect(initial.items.map((i: any) => i.key)).toEqual([
-      'notebook_grid', 'notebook_ruled', 'pin_aliceai', 'red_pen', 'corrector', 'sticker', 'balloon', 'bell', 'aura_analyzer', 'nickname', 'whoopee_cushion', 'window', 'chalk', 'curtains_fund', 'clan_image'
+      'notebook_grid', 'notebook_ruled', 'pin_aliceai', 'red_pen', 'corrector', 'sticker', 'eraser', 'balloon', 'bell', 'aura_analyzer', 'nickname', 'whoopee_cushion', 'window', 'chalk', 'curtains_fund', 'clan_image'
     ])
     for (const i of initial.items) {
       if (i.resetOnly) continue
@@ -235,7 +235,8 @@ describe('event items (free stub shop)', () => {
 
     // granted things show up where the web client reads them
     const inventory = (await api('GET', '/v1/aliceai/inventory', { token: user.token })).body.items
-    expect(inventory.map((i: any) => i.kind).sort()).toEqual(['stain', 'sticker', 'whoopee_cushion', 'window'])
+    // only backpack items: the bell, aura analyzer and clan picture are left at 0 here, but are never listed anyway
+    expect(inventory.map((i: any) => i.kind).sort()).toEqual(['eraser', 'stain', 'sticker', 'whoopee_cushion', 'window'])
     expect(inventory.find((i: any) => i.kind === 'sticker').asset).toStartWith('sticker_')
     expect((await api('GET', '/red-pens/inventory', { token: user.token })).body.data.events[0].balance).toBe(1)
     expect((await api('GET', '/post-notebooks/inventory', { token: user.token })).body.data).toMatchObject({ applicationsEnabled: true, balance: { grid: 1, ruled: 1 } })
@@ -256,6 +257,24 @@ describe('event items (free stub shop)', () => {
     expect((await free(user, 'curtains_fund', 1)).body.error.code).toBe('VALIDATION_ERROR')
     expect(item((await free(user, 'curtains_fund', -15)).body, 'curtains_fund').count).toBe(0)
     expect((await api('GET', `/v1/aliceai/profiles/${user.id}`, { token: user.token })).body.curtains.fund).toBe(0)
+
+    // collected, claimed and closed curtains: the full reset takes them away
+    await free(user, 'chalk', 100)
+    await donate(user, user, 100)
+    expect((await api('POST', `/v1/aliceai/profiles/${user.id}/curtains/claim`, { token: user.token })).body.hasCurtains).toBe(true)
+    await api('PUT', `/v1/aliceai/profiles/${user.id}/curtains`, { token: user.token, body: { closed: true } })
+    const full = item((await api('GET', '/v1/aliceai/free', { token: user.token })).body, 'curtains_fund')
+    expect(full).toMatchObject({ count: 100, owned: true, note: 'шторы есть' })
+    const reset = item((await free(user, 'curtains_fund', -1000)).body, 'curtains_fund')
+    expect(reset).toMatchObject({ count: 0, owned: false })
+    expect((await api('GET', `/v1/aliceai/profiles/${user.id}`, { token: user.token })).body.curtains).toMatchObject({ fund: 0, hasCurtains: false, closed: false })
+  })
+
+  test('one-off purchases stay out of the backpack', async () => {
+    const user = await createUser()
+    for (const key of ['bell', 'aura_analyzer', 'clan_image', 'eraser']) await free(user, key, 1)
+    const inventory = (await api('GET', '/v1/aliceai/inventory', { token: user.token })).body.items
+    expect(inventory.map((i: any) => i.kind)).toEqual(['eraser'])
   })
 
   test('pin, nickname and aura', async () => {

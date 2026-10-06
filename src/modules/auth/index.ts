@@ -245,9 +245,12 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
     async ({ body, auth }) => {
       const account = await findAccount(auth.accountId)
       if (!account) throw unauthorized('Account not found')
+      // the SDK sends oldPassword, the web client currentPassword
+      const oldPassword = body.oldPassword ?? body.currentPassword
+      if (oldPassword === undefined) throw badRequest('Old password is required', 'VALIDATION_ERROR')
       if (!isValidPassword(body.newPassword)) throw badRequest('Password must be 10-128 printable ASCII characters', 'INVALID_PASSWORD')
-      if (body.newPassword === body.oldPassword) throw badRequest('New password must differ from the old one', 'SAME_PASSWORD')
-      if (!(await verifyPassword(body.oldPassword, account.passwordHash))) throw badRequest('Old password is incorrect', 'INVALID_OLD_PASSWORD')
+      if (body.newPassword === oldPassword) throw badRequest('New password must differ from the old one', 'SAME_PASSWORD')
+      if (!(await verifyPassword(oldPassword, account.passwordHash))) throw badRequest('Old password is incorrect', 'INVALID_OLD_PASSWORD')
 
       await db
         .update(accounts)
@@ -258,7 +261,11 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
     },
     {
       account: true,
-      body: t.Object({ oldPassword: t.String({ maxLength: 256 }), newPassword: t.String({ maxLength: 256 }) }),
+      body: t.Object({
+        oldPassword: t.Optional(t.String({ maxLength: 256 })),
+        currentPassword: t.Optional(t.String({ maxLength: 256 })),
+        newPassword: t.String({ maxLength: 256 })
+      }),
       detail: { summary: 'Change password (other sessions are revoked)' }
     }
   )

@@ -9,6 +9,7 @@ import { redis, rk } from '../../redis'
 import { loadBriefs } from '../../services/users'
 
 export type ItemKind = 'sticker' | 'eraser' | 'window' | 'stain' | 'whoopee_cushion'
+export const BACKPACK_KINDS: ItemKind[] = ['sticker', 'eraser', 'window', 'stain', 'whoopee_cushion']
 
 /** Items of the stub shop: everything is granted for free from the event page (./free.ts) */
 export const SHOP_INFO = [

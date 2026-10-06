@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia'
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { config } from '../../config'
 import { db } from '../../db/client'
 import { eventItems } from '../../db/schema'
@@ -7,6 +7,7 @@ import { authPlugin } from '../../plugins/auth'
 import { Enum, Uuid } from '../../schemas'
 import { requireTargetUser } from '../../services/users'
 import {
+  BACKPACK_KINDS,
   eventActive,
   applyTool,
   assertEventEnabled,
@@ -111,7 +112,8 @@ export const eventModule = new Elysia({ tags: ['Event'] })
       const items = await db
         .select({ id: eventItems.id, kind: eventItems.kind, asset: eventItems.asset })
         .from(eventItems)
-        .where(and(eq(eventItems.userId, me.id), isNull(eventItems.usedAt)))
+        // only things that go into the backpack: one-off purchases (bell, aura analyzer…) are stored as items too
+        .where(and(eq(eventItems.userId, me.id), isNull(eventItems.usedAt), inArray(eventItems.kind, BACKPACK_KINDS)))
         .orderBy(asc(eventItems.createdAt))
       return { items }
     },

@@ -156,8 +156,9 @@
         if (item.key === 'aura_analyzer' && item.owned) actions.append(button('Перемерить', async () => { await change(item, -1); await change(item, 1) }))
         if (item.key === 'clan_image' && item.owned) actions.append(...avatarControls())
       } else if (item.resetOnly) {
-        const reset = button('Обнулить', () => change(item, -item.count), 'danger')
-        reset.disabled = item.count === 0
+        // -1000: the full reset, it takes the curtains too
+        const reset = button(item.note === 'шторы есть' ? 'Забрать шторы' : 'Обнулить', () => change(item, -1000), 'danger')
+        reset.disabled = !item.owned
         actions.append(reset)
       } else {
         for (const n of [1, 5, 10]) actions.append(button(`+${n}`, () => change(item, n), n === 1 ? 'primary' : ''))

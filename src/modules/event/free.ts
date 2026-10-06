@@ -24,6 +24,7 @@ export const FREE_ITEMS: FreeItem[] = [
   { key: 'red_pen', title: 'Красная ручка', description: 'Исправить слово в чужом посте (меню поста)', once: false },
   { key: 'corrector', title: 'Корректор', description: 'Замазать фрагмент текста в посте (меню поста)', once: false },
   { key: 'sticker', title: 'Наклейка для баннера', description: 'Наклеить на баннер профиля', once: false },
+  { key: 'eraser', title: 'Ластик', description: 'Стереть наклейку, пятно или разбитое окно с чужого баннера (свой стирается бесплатно)', once: false },
   { key: 'balloon', title: 'Шарик с водой', description: 'Бросить в баннер или пост на чужом профиле', once: false },
   { key: 'bell', title: 'Звонок', description: 'При получении звенит у всех, кто сейчас онлайн', once: true },
   { key: 'aura_analyzer', title: 'Анализатор ауры', description: 'Ставит профилю случайную ауру от 0 до 100', once: true },
@@ -31,7 +32,7 @@ export const FREE_ITEMS: FreeItem[] = [
   { key: 'whoopee_cushion', title: 'Подушка-пердушка', description: 'Подложить на чужой профиль', once: false },
   { key: 'window', title: 'Портфель', description: 'Разбить окно на баннере чужого профиля', once: false },
   { key: 'chalk', title: 'Мелки', description: 'Скидываются на шторы любого профиля, и своего тоже', once: false },
-  { key: 'curtains_fund', title: 'Собрано на шторы', description: 'Мелки, которые скинули на шторы вашего профиля', once: false, resetOnly: true },
+  { key: 'curtains_fund', title: 'Шторы', description: 'Мелки, скинутые на шторы вашего профиля; обнуление забирает и сами шторы', once: false, resetOnly: true },
   { key: 'clan_image', title: 'Своя картинка вместо эмодзи клана', description: 'Загрузить картинку на этой странице', once: true }
 ]
 
@@ -50,7 +51,7 @@ const WALLET_COLUMNS = {
   corrector: 'correctors',
   chalk: 'balance'
 } as const
-const ITEM_KINDS: Record<string, EventItemKind> = { sticker: 'sticker', balloon: 'stain', whoopee_cushion: 'whoopee_cushion', window: 'window' }
+const ITEM_KINDS: Record<string, EventItemKind> = { sticker: 'sticker', eraser: 'eraser', balloon: 'stain', whoopee_cushion: 'whoopee_cushion', window: 'window' }
 const ONE_OFF_KINDS: Record<string, EventItemKind> = { bell: 'bell', aura_analyzer: 'aura_analyzer', clan_image: 'clan_image' }
 const ALICE_PIN = { slug: 'aliceai', name: 'Алиса AI', description: 'Участник ивента «Алиса AI»', url: `/public/events/${config.event.id}/pin-aliceai.svg` }
 
@@ -64,7 +65,7 @@ async function freeState(userId: string) {
       .groupBy(eventItems.kind),
     db.select({ slug: userPins.pinSlug }).from(userPins).where(and(eq(userPins.userId, userId), eq(userPins.pinSlug, ALICE_PIN.slug))),
     db.select().from(eventNicknames).where(and(eq(eventNicknames.userId, userId), sql`${eventNicknames.expiresAt} > now()`)).orderBy(desc(eventNicknames.createdAt)),
-    db.select({ aura: eventProfiles.aura, fund: eventProfiles.curtainsFund, goal: eventProfiles.curtainsGoal }).from(eventProfiles).where(eq(eventProfiles.userId, userId))
+    db.select({ aura: eventProfiles.aura, fund: eventProfiles.curtainsFund, goal: eventProfiles.curtainsGoal, hasCurtains: eventProfiles.curtainsAvailable }).from(eventProfiles).where(eq(eventProfiles.userId, userId))
   ])
   const countOf = (kind: EventItemKind) => items.find((i) => i.kind === kind)?.count ?? 0
   const active = nicknames.find((n) => n.id === wallet.activeNicknameId)
@@ -81,8 +82,10 @@ async function freeState(userId: string) {
       else count = active ? 1 : 0
       if (item.key === 'nickname' && active) note = active.label
       if (item.key === 'aura_analyzer' && count) note = `аура ${profile[0]?.aura ?? 0}`
-      if (item.key === 'curtains_fund' && profile[0]) note = `цель ${profile[0].goal}`
-      return { ...item, count, owned: count > 0, note }
+      if (item.key === 'curtains_fund' && profile[0]) note = profile[0].hasCurtains ? 'шторы есть' : `цель ${profile[0].goal}`
+      // curtains can be taken back even when the collected chalk is already 0
+      const owned = count > 0 || (item.key === 'curtains_fund' && !!profile[0]?.hasCurtains)
+      return { ...item, count, owned, note }
     })
   }
 }
@@ -114,8 +117,8 @@ async function grant(user: { id: string; username: string | null }, key: string,
   const item = FREE_ITEMS.find((i) => i.key === key)
   if (!item) throw notFound('Нет такого предмета', 'ITEM_NOT_FOUND')
   if (item.once) amount = Math.sign(amount)
-  if (amount === 0) return
   if (item.resetOnly && amount > 0) throw badRequest('Это можно только обнулить', 'VALIDATION_ERROR')
+  if (amount === 0) return
 
   let ringBell = false
   await db.transaction(async (tx) => {
@@ -131,7 +134,7 @@ async function grant(user: { id: string; username: string | null }, key: string,
     }
     if (key in ITEM_KINDS) {
       const kind = ITEM_KINDS[key]!
-      await addItems(tx, user.id, kind, amount, () => (kind === 'sticker' ? pick(STICKERS) : kind === 'stain' ? 'water_stain' : kind === 'window' ? 'window_broken' : 'cushion'))
+      await addItems(tx, user.id, kind, amount, () => (kind === 'sticker' ? pick(STICKERS) : kind === 'eraser' ? 'eraser' : kind === 'stain' ? 'water_stain' : kind === 'window' ? 'window_broken' : 'cushion'))
       return
     }
     if (key in ONE_OFF_KINDS) {
@@ -150,7 +153,9 @@ async function grant(user: { id: string; username: string | null }, key: string,
       return
     }
     if (key === 'curtains_fund') {
-      await bumpProfile(tx, user.id, { curtainsFund: sql`greatest(0, ${eventProfiles.curtainsFund} + ${amount})` })
+      // a full reset (the button) also takes the curtains away
+      const full = amount <= -1000
+      await bumpProfile(tx, user.id, full ? { curtainsFund: 0, curtainsAvailable: false, curtainsClosed: false } : { curtainsFund: sql`greatest(0, ${eventProfiles.curtainsFund} + ${amount})` })
       return
     }
     if (key === 'pin_aliceai') {
