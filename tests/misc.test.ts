@@ -474,9 +474,16 @@ describe('event', () => {
     expect((await paint(0, 6)).body.success).toBe(true)
     expect(await error(paint(0, 6))).toBe('Вы уже закрасили этот фрагмент')
     expect(await error(paint(0, 3))).toBe('Выделите весь закрашенный фрагмент')
-    await paint(7, 10)
-    await paint(19, 22)
-    expect((await paint(23, 28)).body.error.code).toBe('CORRECTOR_LIMIT')
+    // one corrector per user on a post, three per post
+    expect(await error(paint(7, 10))).toBe('Вы уже использовали корректор на этом посте')
+    const others = await Promise.all([createUser(), createUser(), createUser()])
+    for (const user of others) await db.execute(sql`insert into event_wallets (user_id, correctors) values (${user.id}, 1)`)
+    expect((await paint(7, 10, others[0])).body.success).toBe(true)
+    expect((await paint(19, 22, others[1])).body.success).toBe(true)
+    expect(await error(paint(23, 28, others[2]))).toBe('На этом посте уже использовали 3 корректора')
+    const state = (await api('GET', `/correctors/state?ids=${post.id}`, { token: others[2].token })).body.data[post.id]
+    expect(state.events[0].used).toBe(3)
+    expect(state.marks).toHaveLength(3)
   })
 
   test('posts carry their red pen and corrector state', async () => {

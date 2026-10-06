@@ -487,8 +487,8 @@ export async function toolState(viewerId: string | null, tool: Tool, postIds: st
     })
     const serverTime = new Date().toISOString()
     if (tool === 'corrector') {
-      // how many the viewer already used on this post (the client allows 3)
-      const used = own.filter((m) => m.authorId === viewerId).length
+      // correctors already on the post, from everyone: the client stops at CORRECTOR_LIMIT
+      const used = own.length
       data[id] = { revision: revisionOf(post.content), serverTime, events: eventsList().map((e) => ({ ...e, used })), marks: own.map(render) }
       continue
     }
@@ -569,20 +569,21 @@ export async function applyTool(userId: string, tool: Tool, input: { postId: str
         : []
     if (claim.length >= RED_PEN_LIMIT) throw badRequest(`Вы уже исправили ${RED_PEN_LIMIT} слов`, 'RED_PEN_LIMIT')
     if (tool === 'corrector') {
-      const [{ used }] = await tx
-        .select({ used: sql<number>`count(*)::int` })
+      // at most CORRECTOR_LIMIT on a post, one of them per user
+      const painted = await tx
+        .select({ authorId: postMarks.authorId })
         .from(postMarks)
         .where(
           and(
             eq(postMarks.postId, post.id),
             eq(postMarks.kind, 'corrector'),
-            eq(postMarks.authorId, userId),
             eq(postMarks.revision, input.revision),
             isNull(postMarks.canceledAt),
             gt(postMarks.createdAt, sql`now() - interval '1 day'`)
           )
         )
-      if (used >= CORRECTOR_LIMIT) throw badRequest(`На этом посте вы уже использовали ${CORRECTOR_LIMIT} корректора`, 'CORRECTOR_LIMIT')
+      if (painted.some((m) => m.authorId === userId)) throw badRequest('Вы уже использовали корректор на этом посте', 'CORRECTOR_LIMIT')
+      if (painted.length >= CORRECTOR_LIMIT) throw badRequest(`На этом посте уже использовали ${CORRECTOR_LIMIT} корректора`, 'CORRECTOR_LIMIT')
     }
     if (claim.length === 0) {
       const [wallet] = await tx
