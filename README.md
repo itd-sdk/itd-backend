@@ -1,5 +1,7 @@
 # itd-backend
 
+[![AI-DECLARATION: auto](https://img.shields.io/badge/䷼%20AI--DECLARATION-auto-ede9fe?labelColor=ede9fe)](https://ai-declaration.md)
+
 Backend-клон социальной сети [ИТД (итд.com)](https://xn--d1ah4a.com). Эндпоинты, модели ответов и
 формат ошибок повторяют контракт, который ожидает [itd-sdk](https://github.com/itd-sdk/itd-sdk)
 (и официальный веб-клиент), поэтому SDK работает с этим сервером без изменений — достаточно
