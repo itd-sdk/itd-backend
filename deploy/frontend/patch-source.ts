@@ -2,8 +2,14 @@
  * Applies the openitd patches in place to an itd-frontend checkout (raw/ and decompiled/).
  * This is how the `openitd` branch of itd-frontend is produced; after itd-frontend `main` is updated:
  *
- *   cd ../itd-frontend && git checkout openitd && git merge -X theirs main
- *   bun ../itd-backend/deploy/frontend/patch-source.ts --source . && git commit -am "openitd patches"
+ *   cd ../itd-frontend && git switch openitd && git fetch origin
+ *   git merge -X theirs origin/main                                  # files main deleted conflict:
+ *   git diff --name-only --diff-filter=U | xargs -r git rm -q        #   drop them
+ *   git checkout origin/main -- .                                    # the merge result is exactly main
+ *   bun ../itd-backend/deploy/frontend/patch-source.ts --source .
+ *   git commit -am "merge main; openitd patches" && git push
+ *
+ * The build accepts either branch: patches recognize code they already changed.
  */
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'

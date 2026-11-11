@@ -84,7 +84,8 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       name: 'login field: Telegram instead of E-Mail',
       find: /children:"E-Mail"\}\),(\w+)\("input",\{type:"email"/g,
       replace: (_, h) => `children:"Telegram или телефон"}),${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false`,
-      done: /children:"Telegram или телефон"\}\),\w+\("input",\{type:"text",autoComplete:"username"/
+      // the @ prefix patch wraps the input afterwards, so only the label is left to recognize
+      done: /children:"Telegram или телефон"\}\)/
     },
     text('ilya@gmail\\.com', '@username', 'login placeholder'),
     {
@@ -141,19 +142,19 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       name: 'shop: desktop menu item',
       find: /[\w$]+\([\w$]+,\{href:"\/shop",icon:[\w$]+\([\w$]+,\{\}\),badge:[\w$]+,children:"Магаз"\}\),/g,
       replace: () => '',
-      done: /children:"Поиск"\}\),\([\w$]+\.active/
+      done: /children:"Поиск"\}\),(\([\w$]+\.active|[\w$]+\([\w$]+,\{path:"\/event")/
     },
     {
       name: 'shop: mobile menu item',
       find: /\{id:"shop",label:"Магаз",icon:[\w$]+,href:"\/shop"\},/g,
       replace: () => '',
-      done: /\{id:"feed",label:"Лента",icon:[\w$]+,href:"\/"\},\.\.\./
+      done: /\{id:"feed",label:"Лента",icon:[\w$]+,href:"\/"\},(\.\.\.|\{id:"event")/
     },
     {
       name: 'shop: route',
       find: /,[\w$]+\([\w$]+,\{path:"\/shop\/:rest\*"\}\)/g,
       replace: () => '',
-      done: /\{path:"\/search"\}\),[\w$]+\([\w$]+,\{path:"\/event\//
+      done: /\{path:"\/search"\}\),[\w$]+\([\w$]+,\{path:"\/(event\/|hashtag\/)/
     },
     {
       // there is no НУКСТА subscription: its buttons and the payment settings go away
@@ -185,7 +186,7 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     {
       // banners could only be drawn: a picture from disk goes through the same save as a drawn one (data URL)
       name: 'profile: upload a banner picture',
-      find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
+      find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))(?!,[\w$]+\("label",\{className:[\w$.]+,title:"Загрузить баннер")([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
       replace: (_, drawButton, h, buttonClass, rest, save) =>
         `${drawButton},${h}("label",{className:${buttonClass},title:"Загрузить баннер",style:{cursor:"pointer"},children:[` +
         `${h}("svg",{width:20,height:20,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",children:[` +
@@ -277,19 +278,19 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     // ---- error texts for the bot codes: the client shows its own text by code, the server message is dropped
     {
       name: 'errors: phone sign-in',
-      find: /TOO_MANY_ATTEMPTS:"Слишком много попыток\. Попробуйте позже\.",/g,
+      find: /TOO_MANY_ATTEMPTS:"Слишком много попыток\. Попробуйте позже\.",(?!PHONE_NOT_SHARED:)/g,
       replace: (m) => `${m}${botErrors()}`,
       done: /TOO_MANY_ATTEMPTS:"[^"]*",PHONE_NOT_SHARED:/
     },
     {
       name: 'errors: phone attach dialog',
-      find: /NO_CHANNEL_AVAILABLE:"Повторный звонок пока недоступен\. Попробуйте позже\.",/g,
+      find: /NO_CHANNEL_AVAILABLE:"Повторный звонок пока недоступен\. Попробуйте позже\.",(?!PHONE_NOT_SHARED:)/g,
       replace: (m) => `${m}${botErrors()}`,
       done: /NO_CHANNEL_AVAILABLE:"[^"]*",PHONE_NOT_SHARED:/
     },
     {
       name: 'errors: settings',
-      find: /SAME_PHONE:"Это ваш текущий номер\.",/g,
+      find: /SAME_PHONE:"Это ваш текущий номер\.",(?!PHONE_NOT_SHARED:)/g,
       replace: (m) => `${m}${botErrors()}`,
       done: /SAME_PHONE:"[^"]*",PHONE_NOT_SHARED:/
     },

@@ -1,6 +1,7 @@
 /**
- * The same openitd changes as ./patches.ts for itd-frontend/decompiled (the readable copy of the bundle).
- * Nothing is built from it; it keeps the decompiled sources in sync with the patched bundle.
+ * Part of the openitd changes of ./patches.ts for itd-frontend/decompiled (the readable copy of the bundle):
+ * the login form, the bot hints, the shop and НУКСТА. Nothing is built from decompiled/, so the rest (phone,
+ * settings, sign-up form) lives only in raw/.
  */
 import type { Patch } from './patches'
 
@@ -23,17 +24,9 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
     },
     text('ilya@gmail\\.com', '@username', 'login placeholder'),
     text('Введите email', 'Введите ник в Telegram', 'empty login message'),
-    text('Этот email уже зарегистрирован', 'Этот Telegram уже зарегистрирован', 'taken login message'),
     text('Неверный email или пароль', 'Неверный ник Telegram или пароль', 'invalid credentials message'),
     text('Введите корректный email', 'Введите корректный ник Telegram', 'invalid login message'),
     text('Код с почты', 'Код из Telegram', 'code input label'),
-    {
-      name: 'sign-up: open the bot first',
-      find: /("Создание аккаунта",?\s*\}\),\s*(\w+)\("p", \{\s*className: \w+\.subtitle,\s*children: )"Пожалуйста, введите ваши данные"/g,
-      replace: (_, head, h) =>
-        `${head}[\n"Сначала откройте Telegram-бота ",\n${link(h)},\n" и нажмите «Старт» — туда придёт код подтверждения. Затем укажите ваш ник в Telegram и придумайте пароль.",\n]`,
-      done: /"Сначала откройте Telegram-бота "/
-    },
     {
       name: 'sign-in: the code comes from the bot',
       find: /("Вход",?\s*\}\),\s*(\w+)\("p", \{\s*className: \w+\.subtitle,\s*children: )"Пожалуйста, введите ваши данные"/g,
