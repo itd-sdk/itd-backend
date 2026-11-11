@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { inflateSync } from 'node:zlib'
 import { decodeKeyset, encodeKeyset, parseOffset } from '../src/lib/cursor'
+import { bannerDrawingPng, DrawingError, parseBannerDrawing, renderDrawing } from '../src/lib/drawing'
 import { normalizeIp } from '../src/lib/ip'
 import { signAccessToken, TokenVerificationError, verifyAccessToken } from '../src/lib/jwt'
 import { sniff } from '../src/lib/media'
@@ -154,5 +156,86 @@ describe('environment helpers', () => {
     expect(sniff(PNG_1x1, 'video/mp4')).toMatchObject({ kind: 'image', mime: 'image/png', width: 1, height: 1 })
     expect(sniff(Buffer.from('ID3\u0004\u0000\u0000\u0000\u0000\u0000\u0000hello'))).toMatchObject({ kind: 'audio', mime: 'audio/mpeg' })
     expect(sniff(Buffer.from('<html><script>alert(1)</script></html>'))).toBeNull()
+  })
+})
+
+describe('banner drawings', () => {
+  const drawing = (ops: unknown[]) => ({ version: 1, width: 1100, height: 380, ops })
+  const pixel = (pixels: Uint8Array, x: number, y: number) => [...pixels.subarray((y * 1100 + x) * 3, (y * 1100 + x) * 3 + 3)]
+
+  test('strokes are painted as the client paints them', () => {
+    const pixels = renderDrawing(
+      parseBannerDrawing(
+        drawing([
+          { tool: 'brush', color: '#FF0000', width: 10, points: [[100, 100], [200, 100]] },
+          { tool: 'rectangle', color: '#00FF00', width: 4, points: [[300, 50], [400, 150]] },
+          { tool: 'circle', color: '#0000ff', width: 4, points: [[600, 200], [650, 200]] },
+          { tool: 'brush', color: '#000', width: 20, points: [[900, 300]] },
+          { tool: 'eraser', color: '#FF0000', width: 6, points: [[150, 90], [150, 110]] }
+        ])
+      )
+    )
+    expect(pixel(pixels, 120, 100)).toEqual([255, 0, 0])
+    expect(pixel(pixels, 120, 110)).toEqual([255, 255, 255])
+    // the round end reaches past the last point
+    expect(pixel(pixels, 203, 100)).toEqual([255, 0, 0])
+    // the eraser is white whatever its colour
+    expect(pixel(pixels, 150, 100)).toEqual([255, 255, 255])
+    // a rectangle is an outline, a circle goes around its first point
+    expect(pixel(pixels, 350, 50)).toEqual([0, 255, 0])
+    expect(pixel(pixels, 350, 100)).toEqual([255, 255, 255])
+    expect(pixel(pixels, 600, 250)).toEqual([0, 0, 255])
+    expect(pixel(pixels, 600, 200)).toEqual([255, 255, 255])
+    // a single point is a dot
+    expect(pixel(pixels, 905, 300)).toEqual([0, 0, 0])
+  })
+
+  test('clear starts over; strokes may leave the canvas', () => {
+    const pixels = renderDrawing(
+      parseBannerDrawing(
+        drawing([
+          { tool: 'brush', color: '#FF0000', width: 10, points: [[100, 100], [200, 100]] },
+          { tool: 'clear' },
+          { tool: 'line', color: '#000000', width: 6, points: [[-2000, 190], [3000, 190]] }
+        ])
+      )
+    )
+    expect(pixel(pixels, 120, 100)).toEqual([255, 255, 255])
+    expect(pixel(pixels, 0, 190)).toEqual([0, 0, 0])
+    expect(pixel(pixels, 1099, 190)).toEqual([0, 0, 0])
+  })
+
+  test('the result is a PNG of the banner size', () => {
+    const { bytes, width, height } = bannerDrawingPng(drawing([{ tool: 'brush', color: '#007AFF', width: 8, points: [[10, 10], [500, 300]] }]))
+    expect(sniff(bytes)).toEqual({ kind: 'image', mime: 'image/png', ext: 'png', width: 1100, height: 380 })
+    expect([width, height]).toEqual([1100, 380])
+    // IDAT follows the signature (8 bytes) and IHDR (25): length, type, data
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    expect(Buffer.from(bytes.subarray(37, 41)).toString('latin1')).toBe('IDAT')
+    expect(inflateSync(bytes.subarray(41, 41 + view.getUint32(33))).length).toBe(380 * (1 + 1100 * 3))
+  })
+
+  test('anything else is refused', () => {
+    const stroke = { tool: 'brush', color: '#000000', width: 4, points: [[1, 1]] }
+    const bad: unknown[] = [
+      'data:image/png;base64,AAAA',
+      { ...drawing([]), version: 2 },
+      { ...drawing([]), width: 4000 },
+      drawing([{ ...stroke, tool: 'image' }]),
+      drawing([{ ...stroke, color: 'url(x)' }]),
+      drawing([{ ...stroke, width: 0 }]),
+      drawing([{ ...stroke, width: 5000 }]),
+      drawing([{ ...stroke, points: [] }]),
+      drawing([{ ...stroke, points: [[1, 'a']] }]),
+      drawing([{ ...stroke, points: [[1e9, 1]] }]),
+      drawing([{ ...stroke, points: [[Number.NaN, 1]] }]),
+      drawing([{ ...stroke, tool: 'line' }]),
+      drawing([{ ...stroke, points: Array.from({ length: 4097 }, () => [1, 1]) }]),
+      drawing(Array.from({ length: 2001 }, () => stroke))
+    ]
+    for (const input of bad) expect(() => parseBannerDrawing(input)).toThrow(DrawingError)
+    // far more painting than a drawing needs
+    const heavy = drawing(Array.from({ length: 2000 }, () => ({ tool: 'line', color: '#000000', width: 200, points: [[0, 0], [1100, 380]] })))
+    expect(() => bannerDrawingPng(heavy)).toThrow(DrawingError)
   })
 })

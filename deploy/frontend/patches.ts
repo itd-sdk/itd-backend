@@ -184,7 +184,8 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /const ([\w$]+)=[\w$]+\?"reload":"no-cache",[\w$]+=fetch\(/
     },
     {
-      // banners could only be drawn: a picture from disk goes through the same save as a drawn one (data URL)
+      // banners can only be drawn (the client sends the strokes to /files/banner-drawing): a picture from disk goes
+      // through the same save, as a File in place of the strokes
       name: 'profile: upload a banner picture',
       find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))(?!,[\w$]+\("label",\{className:[\w$.]+,title:"Загрузить баннер")([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
       replace: (_, drawButton, h, buttonClass, rest, save) =>
@@ -192,8 +193,24 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
         `${h}("svg",{width:20,height:20,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",children:[` +
         `${h}("path",{d:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}),${h}("path",{d:"M17 8l-5-5-5 5"}),${h}("path",{d:"M12 3v12"})]}),` +
         `${h}("input",{type:"file",accept:"image/*",style:{display:"none"},onChange:ev=>{const f=ev.target.files&&ev.target.files[0];ev.target.value="";` +
-        `if(!f)return;const r=new FileReader;r.onload=()=>{Promise.resolve(${save}(r.result)).catch(()=>{})};r.readAsDataURL(f)}})]})${rest}`,
+        `if(!f)return;Promise.resolve(${save}(null,f)).catch(()=>{})}})]})${rest}`,
       done: /title:"Загрузить баннер"/
+    },
+    {
+      // a source patched before November, when the save took a data URL
+      name: 'profile: banner picture as a File',
+      find: /const ([\w$]+)=new FileReader;\1\.onload=\(\)=>\{Promise\.resolve\(([\w$]+)\(\1\.result\)\)\.catch\(\(\)=>\{\}\)\};\1\.readAsDataURL\(f\)/g,
+      replace: (_, _reader, save) => `Promise.resolve(${save}(null,f)).catch(()=>{})`,
+      done: /if\(!f\)return;Promise\.resolve\([\w$]+\(null,f\)\)\.catch/
+    },
+    {
+      // ...and a File goes to openitd's own endpoint: /files/banner-drawing takes only strokes
+      name: 'files: banner picture endpoint',
+      find: /async uploadBannerDrawing\(([\w$]+)\)\{return ([\w$]+)\.post\("\/files\/banner-drawing",\1\)\}/g,
+      replace: (_, arg, api) =>
+        `async uploadBannerDrawing(${arg}){if(${arg} instanceof File){const __form=new FormData;__form.append("file",${arg});` +
+        `return await ${api}.uploadFormData("/files/banner-image",__form,{timeout:300*1e3})}return ${api}.post("/files/banner-drawing",${arg})}`,
+      done: /\.uploadFormData\("\/files\/banner-image",/
     },
     {
       // no ITD copyright and legal documents: the page about this copy, the project's channel and its author instead

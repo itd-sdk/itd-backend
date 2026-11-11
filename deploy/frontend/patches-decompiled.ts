@@ -62,19 +62,19 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
       name: 'shop: desktop menu item',
       find: /\n\s*[\w$]+\([\w$]+, \{\s*href: "\/shop",\s*icon: [\w$]+\([\w$]+, \{\}\),\s*badge: [\w$]+,\s*children: "Магаз",\s*\}\),/g,
       replace: () => '',
-      done: /children: "Поиск",?\s*\}\),\s*\(\([\w$]+\.active/
+      done: /children: "Поиск",?\s*\}\),\s*(\(\([\w$]+\.active|[\w$]+\([\w$]+, \{\s*path: "\/event")/
     },
     {
       name: 'shop: mobile menu item',
       find: /\n\s*\{ id: "shop", label: "Магаз", icon: [\w$]+, href: "\/shop" \},/g,
       replace: () => '',
-      done: /\{ id: "feed", label: "Лента", icon: [\w$]+, href: "\/" \},\s*\.\.\./
+      done: /\{ id: "feed", label: "Лента", icon: [\w$]+, href: "\/" \},\s*(\.\.\.|\{ id: "event")/
     },
     {
       name: 'shop: route',
       find: /\n\s*[\w$]+\([\w$]+, \{ path: "\/shop\/:rest\*" \}\),/g,
       replace: () => '',
-      done: /\{ path: "\/search" \}\),\s*[\w$]+\([\w$]+, \{\s*path: "\/event\//
+      done: /\{ path: "\/search" \}\),\s*[\w$]+\([\w$]+, \{\s*path: "\/(event\/|hashtag\/)/
     },
     {
       name: 'nuksta: sidebar button',
