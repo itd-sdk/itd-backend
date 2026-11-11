@@ -215,7 +215,7 @@ export const contactsModule = new Elysia({ tags: ['Auth'] })
     },
     {
       account: true,
-      body: t.Object({ phone: t.String({ maxLength: 32 }), captcha: t.Optional(t.String({ maxLength: 4096 })) }),
+      body: t.Object({ phone: t.String({ maxLength: 32 }), captcha: t.Optional(t.Unknown({ description: 'Captcha answer, ignored (openitd has no captcha)' })) }),
       detail: { summary: 'Attach a phone; the code goes to the Telegram that shared the number with the bot' }
     }
   )
@@ -240,7 +240,7 @@ export const contactsModule = new Elysia({ tags: ['Auth'] })
     },
     {
       account: true,
-      body: t.Object({ phone: t.String({ maxLength: 32 }), captcha: t.Optional(t.String({ maxLength: 4096 })) }),
+      body: t.Object({ phone: t.String({ maxLength: 32 }), captcha: t.Optional(t.Unknown({ description: 'Captcha answer, ignored (openitd has no captcha)' })) }),
       detail: { summary: 'Start a phone change (code to the new number’s Telegram)' }
     }
   )

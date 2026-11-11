@@ -1,29 +1,23 @@
 /* Style fixes for the web client, linked after its own styles (deploy/frontend/build.ts, --css).
    Class names are CSS-module hashes of this bundle: check them again after updating itd-frontend. */
 
-/* notifications: verified badge and pin stay on the same line as the name */
-.CmY2.pGqd {
-  display: flex;
-  flex-direction: row;
-}
-
 /* notifications: the like icon was drawn in the background color */
 span[data-icon="liked"] + span {
   color: var(--accent-like);
 }
 
-/* notifications (the list .pjaO and the pop-up .skU2): icons in the round type badge are solid black (liked.svg brings its own red fill, the badge
-   is red too; comment.svg is an outline only) */
-.pjaO [data-icon] svg,
-.pjaO [data-icon] svg *,
-.skU2 [data-icon] svg,
-.skU2 [data-icon] svg * {
+/* notifications (the list .qKA7 and the pop-up .QN2b): icons in the round type badge are solid black (liked.svg brings
+   its own red fill, the badge is red too; comment.svg is an outline only) */
+.qKA7 [data-icon] svg,
+.qKA7 [data-icon] svg *,
+.QN2b [data-icon] svg,
+.QN2b [data-icon] svg * {
   fill: #000 !important;
   stroke: #000 !important;
 }
 
-/* posts and profiles: the page column (layout wrapper) was 650px; the shop and event pages keep their own width */
-.gOfR:not(.GoKB):not(.Wbj4) {
+/* posts and profiles: the page column (layout wrapper) was 650px; the shop page keeps its own width */
+.ZPS4:not(.htCo) {
   width: min(720px, 100%) !important;
   max-width: 720px !important;
 }

@@ -106,10 +106,26 @@ async function loadVerified(flowToken: string, phone: string) {
 
 const PhoneFlow = { phone: t.String({ maxLength: 32 }), flowToken: t.String({ maxLength: 128 }) }
 
+// openitd has no captcha: the client's captcha frame gets a page that answers with a token at once
+const CAPTCHA_WIDGET = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Проверка</title></head>
+<body style="margin:0;height:65px;display:flex;align-items:center;justify-content:center;font:14px system-ui,sans-serif;color:#8e8e93">Проверка не нужна
+<script>
+var send = function (message) { parent.postMessage(message, location.origin) }
+send({ type: 'size', height: 65 })
+send({ type: 'token', token: 'captcha-disabled' })
+</script></body></html>`
+
 // mounted inside authModule, which adds the /v1/auth prefix
 export const phoneEntryModule = new Elysia({ tags: ['Auth'] })
   .use(contextPlugin)
   .derive(({ ip, country, deviceId, userAgent }) => ({ phoneClient: { ip, country, deviceId, userAgent } }))
+
+  .get('/captcha/page', () => ({ provider: 'openitd', url: '/api/v1/auth/captcha/widget' }), {
+    detail: { summary: 'Captcha frame for the web client (openitd: none, the frame answers at once)' }
+  })
+  .get('/captcha/widget', () => new Response(CAPTCHA_WIDGET, { headers: { 'content-type': 'text/html; charset=utf-8' } }), {
+    detail: { hide: true }
+  })
 
   .get(
     '/consent',
@@ -152,7 +168,7 @@ export const phoneEntryModule = new Elysia({ tags: ['Auth'] })
     {
       body: t.Object({
         phone: t.String({ maxLength: 32 }),
-        captcha: t.Optional(t.String({ maxLength: 4096 })),
+        captcha: t.Optional(t.Unknown({ description: 'Captcha answer, ignored (openitd has no captcha)' })),
         legal: t.Optional(t.Object({ protocolVersion: t.Optional(t.Integer()), contextToken: t.String({ maxLength: 128 }) }))
       }),
       detail: { summary: 'Sign in or up by phone: the code goes to the Telegram that shared the number' }

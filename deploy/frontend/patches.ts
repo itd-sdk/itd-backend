@@ -1,6 +1,6 @@
 /**
- * openitd changes to the official web client: a Telegram username instead of an email on sign-up, sign-in
- * and password recovery, hints about the bot that sends the codes, no captcha step.
+ * openitd changes to the official web client: a Telegram username (or a phone shared with the bot) instead of an
+ * email, hints about the bot that sends the codes, no captcha step, no shop or НУКСТА.
  *
  * Every patch is idempotent: it counts as applied when the original code matches (and gets replaced) or
  * when the patched code is already there, so the same list works on itd-frontend `main` and `openitd`.
@@ -18,6 +18,17 @@ const DEFAULT_BOT = 'openitd_bot'
 
 export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
   const bot = botUsername.trim().replace(/^@/, '')
+  const botErrors = () =>
+    [
+      ['PHONE_NOT_SHARED', `Сначала откройте бота @${bot} и нажмите «Поделиться номером» с этим номером.`],
+      ['TELEGRAM_NOT_STARTED', `Откройте бота @${bot} с этого Telegram и нажмите «Старт».`],
+      ['TELEGRAM_USERNAME_REQUIRED', `Задайте имя пользователя в настройках Telegram и отправьте боту @${bot} /start.`],
+      ['INVALID_TELEGRAM', 'Проверьте ник в Telegram.'],
+      ['INVALID_PHONE', 'Проверьте номер телефона.'],
+      ['IDENTIFIER_TAKEN', 'Этот номер или Telegram уже привязан к другому аккаунту.']
+    ]
+      .map(([code, message]) => `${code}:${JSON.stringify(message)},`)
+      .join('')
   const link = (h: string) => `${h}("a",{href:"https://t.me/${bot}",target:"_blank",rel:"noopener noreferrer",children:"@${bot}"})`
   const text = (from: string, to: string, name: string): Patch => ({
     name,
@@ -25,38 +36,41 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     replace: () => `"${to}"`,
     done: new RegExp(`"${to}"`)
   })
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  // an exact piece of code (a whole string literal with its quotes, or part of a template literal)
+  const swap = (from: string, to: string, name: string): Patch => ({
+    name,
+    find: new RegExp(escape(from), 'g'),
+    replace: () => to,
+    done: new RegExp(escape(to))
+  })
+  const say = (from: string, to: string) => swap(JSON.stringify(from), JSON.stringify(to), `text: ${from}`)
+  const botLink = `@${bot}`
   return [
     {
       name: 'login field: Telegram instead of E-Mail',
       find: /children:"E-Mail"\}\),(\w+)\("input",\{type:"email"/g,
-      replace: (_, h) => `children:"Telegram"}),${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false`,
-      done: /children:"Telegram"\}\),\w+\("input",\{type:"text",autoComplete:"username"/
+      replace: (_, h) => `children:"Telegram или телефон"}),${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false`,
+      done: /children:"Telegram или телефон"\}\),\w+\("input",\{type:"text",autoComplete:"username"/
     },
     text('ilya@gmail\\.com', '@username', 'login placeholder'),
     {
-      // "@" is a fixed prefix on the left (like Flutter's prefixIcon): it cannot be erased, and a typed one is dropped
+      // "@" is a fixed prefix on the left (like Flutter's prefixIcon): it cannot be erased, and a typed one is dropped;
+      // it hides while a phone number is typed (+ or a digit first)
       name: 'login field: @ prefix',
       find: /(\w+)\("input",\{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false,className:(`[^`]*`),value:([\w$]+),onInput:([\w$]+=>\{[^}]*\}),placeholder:"@username",disabled:([\w$]+)\}\)/g,
       replace: (_, h, cls, value, onInput, disabled) =>
         `${h}("div",{style:{position:"relative"},children:[` +
-        `${h}("span",{"aria-hidden":"true",style:{position:"absolute",left:17,top:"50%",transform:"translateY(-50%)",fontSize:16,lineHeight:1,color:"var(--text-secondary)",pointerEvents:"none"},children:"@"}),` +
-        `${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false,className:${cls},style:{paddingLeft:35},value:${value},` +
-        `onInput:ev=>{ev.target.value=ev.target.value.replace(/^@+/,"");(${onInput})(ev)},placeholder:"username",disabled:${disabled}})]})`,
-      done: /placeholder:"username",disabled:/
+        `!/^[+\\d]/.test(${value})&&${h}("span",{"aria-hidden":"true",style:{position:"absolute",left:17,top:"50%",transform:"translateY(-50%)",fontSize:16,lineHeight:1,color:"var(--text-secondary)",pointerEvents:"none"},children:"@"}),` +
+        `${h}("input",{type:"text",autoComplete:"username",autoCapitalize:"off",spellcheck:false,className:${cls},style:{paddingLeft:/^[+\\d]/.test(${value})?16:35},value:${value},` +
+        `onInput:ev=>{ev.target.value=ev.target.value.replace(/^@+/,"");(${onInput})(ev)},placeholder:"username или +7…",disabled:${disabled}})]})`,
+      done: /placeholder:"username или \+7…",disabled:/
     },
-    text('Введите email', 'Введите ник в Telegram', 'empty login message'),
-    text('Этот email уже зарегистрирован', 'Этот Telegram уже зарегистрирован', 'taken login message'),
+    text('Введите email', 'Введите ник в Telegram или номер', 'empty login message'),
     text('Неверный email или пароль', 'Неверный ник Telegram или пароль', 'invalid credentials message'),
     text('Аккаунт с таким email не найден', 'Аккаунт с таким Telegram не найден', 'unknown account message'),
     text('Введите корректный email', 'Введите корректный ник Telegram', 'invalid login message'),
     text('Код с почты', 'Код из Telegram', 'code input label'),
-    {
-      name: 'sign-up: open the bot first',
-      find: /(\w+)\("h1",\{className:(\w+)\.title,children:"Создание аккаунта"\}\),\1\("p",\{className:\2\.subtitle,children:"Пожалуйста, введите ваши данные"\}\)/g,
-      replace: (_, h, c) =>
-        `${h}("h1",{className:${c}.title,children:"Создание аккаунта"}),${h}("p",{className:${c}.subtitle,children:["Сначала откройте Telegram-бота ",${link(h!)}," и нажмите «Старт» — туда придёт код подтверждения. Затем укажите ваш ник в Telegram и придумайте пароль."]})`,
-      done: /"Сначала откройте Telegram-бота "/
-    },
     {
       name: 'sign-in: the code comes from the bot',
       find: /(\w+)\("h1",\{className:(\w+)\.title,children:"Вход"\}\),\1\("p",\{className:\2\.subtitle,children:"Пожалуйста, введите ваши данные"\}\)/g,
@@ -136,16 +150,6 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /const ([\w$]+)=[\w$]+\?"reload":"no-cache",[\w$]+=fetch\(/
     },
     {
-      // a double click on Windows selects the word with the space after it, and the red pen then refuses the
-      // selection ("одно слово без пробелов") and locks its input: drop whitespace around the selection
-      name: 'post tools: trim the selected word',
-      find: /const ([\w$]+)=([\w$]+)\.toString\(\)\.length,([\w$]+)=([\w$]+)\.toString\(\),([\w$]+)=\1\+\3\.length;if\(([\w$]+)\.slice\(\1,\5\)!==\3\)return;/g,
-      replace: (_, start, prefix, text, range, end, source) =>
-        `let ${start}=${prefix}.toString().length,${text}=${range}.toString();${start}+=${text}.length-${text}.trimStart().length;${text}=${text}.trim();` +
-        `const ${end}=${start}+${text}.length;if(!${text}||${source}.slice(${start},${end})!==${text})return;`,
-      done: /\.trimStart\(\)\.length;[\w$]+=[\w$]+\.trim\(\);const [\w$]+=/
-    },
-    {
       // banners could only be drawn: a picture from disk goes through the same save as a drawn one (data URL)
       name: 'profile: upload a banner picture',
       find: /(([\w$]+)\("button",\{className:([\w$.]+),onClick:[\w$]+,title:"Нарисовать баннер",children:[\w$]+\([\w$]+,\{size:20\}\)\}\))([\s\S]{0,1200}?onSave:([\w$]+),mode:"banner")/g,
@@ -170,58 +174,91 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       },
       done: /children:"О проекте"\}\)\}\),[\w$]+\("li",\{children:[\w$]+\("a",\{href:"https:\/\/t\.me\/openitd"/
     },
+    // ---- phone sign-in and sign-up (the code comes from the bot, to the Telegram that shared the number)
+    say(
+      'Создайте аккаунт по номеру телефона. Номер подтвердим проверочным кодом.',
+      `Откройте бота ${botLink}, нажмите «Старт» и «Поделиться номером», затем введите этот номер. Код придёт в Telegram, ник для аккаунта возьмём оттуда.`
+    ),
+    say('Войдите или создайте аккаунт. Номер подтвердим проверочным кодом.', `Введите номер, которым вы поделились с ботом ${botLink}. Код придёт в Telegram.`),
+    say('Код отправлен в приложение ИТД.', `Код отправлен в Telegram, в чат с ботом ${botLink}.`),
+    say('Облачный пароль', 'Пароль'),
+    say('Для этого аккаунта включена дополнительная защита.', 'Введите пароль от аккаунта.'),
+    say('Неверный облачный пароль.', 'Неверный пароль.'),
+    say('Восстановить через почту', 'Восстановить по нику Telegram'),
+    say('Вернуться ко входу по почте', 'Вернуться ко входу по нику'),
+    // ---- attaching a phone (the dialog of the main bundle) and the code channel: "push" is a Telegram message
+    say(
+      'Позвоним и сразу сбросим. Подтвердите номер, чтобы публиковать посты, оставлять комментарии и писать в чатах.',
+      `Сначала откройте бота ${botLink} и нажмите «Поделиться номером». Затем введите тот же номер — код придёт в Telegram.`
+    ),
+    say('Получить звонок', 'Получить код'),
+    say('Позвонить снова', 'Отправить код снова'),
+    say('Звонок бесплатный. Номер не появится в профиле.', 'Номер не появится в профиле.'),
+    swap('`Повторный звонок через ${w} с`', '`Повторная отправка через ${w} с`', 'text: phone resend timer'),
+    say('Отправили уведомление', 'Отправили код в Telegram'),
+    say('Посмотрите код в уведомлении на устройстве, где вы уже вошли в ИТД.', `Код пришёл в Telegram, которым вы поделились номером с ботом ${botLink}.`),
+    say('Позвоним на него, чтобы убедиться, что номер ваш.', `Сначала поделитесь этим номером с ботом ${botLink}: код придёт в тот Telegram.`),
+    // ---- settings: the "email" sign-in method is the Telegram username
+    say('Почта', 'Telegram'),
+    say('Почта не привязана', 'Telegram не привязан'),
+    say('Привязать почту', 'Привязать Telegram'),
+    say('Подтвердите почту', 'Подтвердите Telegram'),
+    say('Подтвердить почту', 'Подтвердить Telegram'),
+    say('Пришлём код подтверждения на эту почту.', 'Пришлём код в этот Telegram.'),
+    say('Новая почта', 'Новый Telegram'),
+    say('Смена почты', 'Смена Telegram'),
+    say('Почта изменена', 'Telegram изменён'),
+    swap('`Теперь входите по почте ${f}`', '`Теперь входите по нику ${f}`', 'text: signed in by the new Telegram'),
+    say('Почта останется прежней', 'Telegram останется прежним'),
+    say('Почта уже изменилась. Откройте настройки заново.', 'Telegram уже изменился. Откройте настройки заново.'),
+    say('Пришлём на неё код, чтобы убедиться, что почта ваша.', `Откройте бота ${botLink} с нового Telegram и нажмите «Старт»: пришлём туда код.`),
+    say('Проверьте адрес почты.', 'Проверьте ник в Telegram.'),
+    say('Другая почта', 'Другой Telegram'),
+    say('Это ваша текущая почта.', 'Это ваш текущий Telegram.'),
+    say('Эта почта уже используется другим аккаунтом.', 'Этот Telegram уже привязан к другому аккаунту.'),
+    say('Сначала привяжите почту.', 'Сначала привяжите Telegram.'),
+    say('К аккаунту уже привязана почта.', 'К аккаунту уже привязан Telegram.'),
+    say('Код из письма', 'Код из Telegram'),
+    say('Неверный код. Проверьте письмо и попробуйте ещё раз.', 'Неверный код. Проверьте сообщение в Telegram и попробуйте ещё раз.'),
+    say('Не удалось отправить письмо. Попробуйте ещё раз.', 'Не удалось отправить код. Попробуйте ещё раз.'),
+    say('Создайте пароль, чтобы входить по почте и по номеру без кода.', 'Создайте пароль, чтобы входить по нику Telegram и по номеру.'),
+    say('С паролем можно входить по почте и по номеру без кода.', 'С паролем можно входить по нику Telegram и по номеру.'),
+    say('Теперь можно входить с паролем по почте и по номеру.', 'Теперь можно входить с паролем по нику Telegram и по номеру.'),
+    swap('`Код на почту ${o.email}`', '`Код в Telegram ${o.email}`', 'text: proof by the Telegram'),
+    swap('`Код на старую почту ${o.email}`', '`Код в текущий Telegram ${o.email}`', 'text: proof by the current Telegram'),
+    swap('`Код на старый номер ${o.phone}`', '`Код в Telegram текущего номера ${o.phone}`', 'text: proof by the current phone'),
+    swap('`Код на номер ${o.phone}`', '`Код в Telegram номера ${o.phone}`', 'text: proof by the phone'),
     {
-      name: 'sign-up: no terms of use',
-      find: /children:\["Продолжая, вы соглашаетесь с"," ",([\w$]+)\("a",\{href:"\/terms",target:"_blank",rel:"noopener noreferrer",children:"условиями использования"\}\)," и"," ",\1\("a",\{href:"\/privacy",target:"_blank",rel:"noopener noreferrer",children:"политикой конфиденциальности"\}\)\]/g,
-      replace: (_, h) =>
-        `children:["Это неофициальная копия для тестов. Продолжая, вы подтверждаете, что ознакомились с"," ",${h}("a",{href:"/privacy",target:"_blank",rel:"noopener noreferrer",children:"информацией о сайте"})]`,
-      done: /"информацией о сайте"/
+      // the new value of the "email" is a Telegram username
+      name: 'settings: Telegram field instead of email',
+      find: /\("input",\{type:"email",autoComplete:"email",placeholder:"you@example\.com",maxLength:\d+/g,
+      replace: () => '("input",{type:"text",autoComplete:"off",autoCapitalize:"off",spellcheck:false,placeholder:"@username",maxLength:33',
+      done: /placeholder:"@username",maxLength:33/
     },
     {
-      name: 'privacy page: about this copy',
-      find: /(([\w$]+)\("h1",\{className:([\w$]+)\.title,children:)"Политика конфиденциальности"\}\),[\s\S]*?children:"privacy@itd\.fun"\}\)\]\}\)\]\}\)/g,
-      replace: (_, h1, h, c) => {
-        const section = (title: string, ...paragraphs: string[]) =>
-          `${h}("section",{className:${c}.section,children:[${h}("h2",{className:${c}.sectionTitle,children:${JSON.stringify(title)}}),` +
-          paragraphs.map((text) => `${h}("p",{className:${c}.text,children:${text.startsWith('[') ? text : JSON.stringify(text)}})`).join(',') +
-          ']})'
-        const tg = (name: string) => `${h}("a",{href:"https://t.me/${name}",target:"_blank",rel:"noopener noreferrer",className:${c}.contact,children:"@${name}"})`
-        return (
-          `${h1}"Политика конфиденциальности"}),${h}("p",{className:${c}.updated,children:"Последнее обновление: 6 октября 2026"}),` +
-          [
-            section(
-              '1. Общие положения',
-              'Настоящий сайт (далее — «Сайт») является неофициальной копией социальной сети «итд». Сайт не связан с ООО «ИТД», не одобрен им и не поддерживается им.'
-            ),
-            section(
-              '2. Права на объекты интеллектуальной собственности',
-              'Все права на дизайн, интерфейс, наименования, логотипы, графические материалы и иные объекты интеллектуальной собственности социальной сети «итд» принадлежат ООО «ИТД». Администрация Сайта не претендует на указанные права.'
-            ),
-            section(
-              '3. Назначение Сайта',
-              'Сайт предназначен исключительно для тестирования и экспериментов. Сайт не является средством связи и не может использоваться для общения, а также для передачи личной или иной значимой информации.'
-            ),
-            section(
-              '4. Ограничение ответственности',
-              'Сайт предоставляется «как есть». Администрация не гарантирует бесперебойную работу Сайта и не несёт ответственности за сохранность аккаунтов, публикаций, комментариев, файлов и иных данных, а также за их утрату, изменение или раскрытие. Любые данные могут быть удалены в любой момент без предварительного уведомления.'
-            ),
-            section(
-              '5. Данные пользователей',
-              'Для работы Сайта хранятся ник в Telegram, хэш пароля, опубликованные материалы и технические сведения о сессиях (IP-адрес, сведения об устройстве). Не размещайте на Сайте персональные данные и сведения, утрата или раскрытие которых для вас нежелательны.'
-            ),
-            section(
-              '6. Сведения о разработке',
-              'Серверная часть (бэкенд) Сайта сгенерирована с помощью искусственного интеллекта. Клиентская часть (фронтенд) Сайта представляет собой декомпилированный бандл, полученный с сайта оригинальной социальной сети.'
-            ),
-            section(
-              '7. Контактная информация',
-              `["Канал проекта в Telegram: ",${tg('openitd')},"."]`,
-              `["Связь с автором: ",${tg('nwokez')},"."]`
-            )
-          ].join(',')
-        )
-      },
-      done: /"Серверная часть \(бэкенд\) Сайта сгенерирована с помощью искусственного интеллекта\."/
+      name: 'settings: Telegram username check',
+      find: /=([\w$]+)=>\/\^\[\^\\s@\]\+@\[\^\\s@\]\+\\\.\[\^\\s@\]\+\$\/\.test\(\1\)/g,
+      replace: (_, v) => `=${v}=>/^@?[a-z][a-z0-9_]{3,31}$/.test(${v})`,
+      done: /=([\w$]+)=>\/\^@\?\[a-z\]\[a-z0-9_\]\{3,31\}\$\/\.test\(\1\)/
+    },
+    // ---- error texts for the bot codes: the client shows its own text by code, the server message is dropped
+    {
+      name: 'errors: phone sign-in',
+      find: /TOO_MANY_ATTEMPTS:"Слишком много попыток\. Попробуйте позже\.",/g,
+      replace: (m) => `${m}${botErrors()}`,
+      done: /TOO_MANY_ATTEMPTS:"[^"]*",PHONE_NOT_SHARED:/
+    },
+    {
+      name: 'errors: phone attach dialog',
+      find: /NO_CHANNEL_AVAILABLE:"Повторный звонок пока недоступен\. Попробуйте позже\.",/g,
+      replace: (m) => `${m}${botErrors()}`,
+      done: /NO_CHANNEL_AVAILABLE:"[^"]*",PHONE_NOT_SHARED:/
+    },
+    {
+      name: 'errors: settings',
+      find: /SAME_PHONE:"Это ваш текущий номер\.",/g,
+      replace: (m) => `${m}${botErrors()}`,
+      done: /SAME_PHONE:"[^"]*",PHONE_NOT_SHARED:/
     },
     {
       // a source patched for another bot
