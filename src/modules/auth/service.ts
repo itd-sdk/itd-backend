@@ -6,7 +6,7 @@ import { accounts, type Role, sessions, users } from '../../db/schema'
 import { ApiError, badRequest, unauthorized } from '../../lib/errors'
 import { randomHexToken, randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
 import { signAccessToken } from '../../lib/jwt'
-import { normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
+import { normalizePhone, normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
 import { addDays, iso } from '../../lib/time'
 import { parseUserAgent } from '../../lib/useragent'
 import { redis, rk } from '../../redis'
@@ -32,6 +32,11 @@ export function assertNotBanned(account: AccountRow) {
 
 export async function findAccountByTelegram(telegram: string, executor: Executor = db) {
   const [row] = await executor.select().from(accounts).where(eq(accounts.telegram, telegram)).limit(1)
+  return row ?? null
+}
+
+export async function findAccountByPhone(phone: string, executor: Executor = db) {
+  const [row] = await executor.select().from(accounts).where(eq(accounts.phone, phone)).limit(1)
   return row ?? null
 }
 
@@ -211,10 +216,14 @@ export function readRefreshCookie(cookie: Cookies, body?: unknown) {
 
 // ---------------------------------------------------------------- one-time code flows
 
-export type FlowPurpose = 'signup' | 'login' | 'reset'
+export type FlowPurpose = 'signup' | 'login' | 'reset' | 'attach_phone' | 'change_phone' | 'change_telegram'
 export type Flow = {
   purpose: FlowPurpose
   telegram: string
+  // the phone the user typed (phone sign-in and recovery) or the one being attached / changed to
+  phone?: string | null
+  // the Telegram username a change switches to
+  newTelegram?: string | null
   // where the code goes; null for password resets of unknown accounts (nothing is sent)
   chatId: string | null
   device: string | null
@@ -237,12 +246,20 @@ export async function startFlow(input: Omit<Flow, 'otpHash' | 'attempts' | 'veri
   return { flowToken, otp }
 }
 
-export async function loadFlow(flowToken: string | undefined, telegram?: string) {
+/** The login the client echoes back: the Telegram nick, the phone, or the new Telegram of a change */
+function matchesFlow(flow: Flow, login: string) {
+  const phone = normalizePhone(login)
+  if (phone && phone === flow.phone) return true
+  const telegram = normalizeTelegram(login)
+  return telegram === flow.telegram || (!!flow.newTelegram && telegram === flow.newTelegram)
+}
+
+export async function loadFlow(flowToken: string | undefined, login?: string) {
   if (!flowToken) throw badRequest('Flow token is missing', 'INVALID_FLOW_TOKEN')
   const raw = await redis.get(flowKey(flowToken))
   if (!raw) throw badRequest('Session expired. Start again', 'INVALID_FLOW_TOKEN')
   const flow = JSON.parse(raw) as Flow
-  if (telegram && normalizeTelegram(telegram) !== flow.telegram) throw badRequest('Telegram does not match', 'INVALID_FLOW_TOKEN')
+  if (login && !matchesFlow(flow, login)) throw badRequest('Telegram does not match', 'INVALID_FLOW_TOKEN')
   return flow
 }
 

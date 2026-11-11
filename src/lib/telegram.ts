@@ -7,9 +7,11 @@ import { logger } from './logger'
  * Contract with the bot (deploy/telegram-bot/bot.py), both sides share REDIS_URL and REDIS_PREFIX:
  *   <prefix>tg:chats   hash  username (lowercase, no @) -> chat id, written by the bot on /start
  *   <prefix>tg:outbox  list  JSON {chatId, text, expiresAt}, pushed here and popped (BLPOP) by the bot
+ *   <prefix>tg:phones  hash  phone (+digits) -> chat id, written by the bot when a user shares their own contact
  */
 const CHATS = () => rk('tg', 'chats')
 const OUTBOX = () => rk('tg', 'outbox')
+const PHONES = () => rk('tg', 'phones')
 
 const USERNAME_RE = /^[a-z][a-z0-9_]{3,31}$/
 
@@ -27,6 +29,29 @@ export function assertTelegram(username: string) {
 }
 
 export const botMention = () => `@${config.telegram.botUsername}`
+
+/** "+7 (999) 123-45-67", "89991234567" or "79991234567" -> "+79991234567"; null when it is not a phone number */
+export function normalizePhone(value: string) {
+  const compact = value.trim().replace(/[\s()-]/g, '')
+  if (!/^\+?\d{10,15}$/.test(compact)) return null
+  let digits = compact.replace(/^\+/, '')
+  // a Russian number typed with the trunk prefix 8
+  if (!compact.startsWith('+') && digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`
+  return `+${digits}`
+}
+
+/** Chat of the Telegram account that shared this number with the bot */
+export async function findPhoneChat(phone: string) {
+  return redis.hget(PHONES(), phone)
+}
+
+export async function requirePhoneChat(phone: string) {
+  const chatId = await findPhoneChat(phone)
+  if (!chatId) {
+    throw badRequest(`Откройте Telegram-бота ${botMention()} и нажмите «Поделиться номером» с этим номером`, 'PHONE_NOT_SHARED')
+  }
+  return chatId
+}
 
 /** Chat id of a user who pressed /start in the bot */
 export async function findTelegramChat(username: string) {
@@ -48,8 +73,18 @@ export async function sendTelegram(chatId: string, text: string, ttlSeconds: num
 
 const escapeHtml = (value: string) => value.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`)
 
-export function otpMessage(code: string, purpose: 'signup' | 'login' | 'reset', device?: string | null) {
-  const action = { signup: 'регистрации в ИТД', login: 'входа в ИТД', reset: 'восстановления пароля в ИТД' }[purpose]
+export type OtpPurpose = 'signup' | 'login' | 'reset' | 'attach_phone' | 'change_phone' | 'change_telegram' | 'proof'
+
+export function otpMessage(code: string, purpose: OtpPurpose, device?: string | null) {
+  const action = {
+    signup: 'регистрации в ИТД',
+    login: 'входа в ИТД',
+    reset: 'восстановления пароля в ИТД',
+    attach_phone: 'привязки номера к аккаунту ИТД',
+    change_phone: 'смены номера в ИТД',
+    change_telegram: 'смены Telegram в ИТД',
+    proof: 'подтверждения смены Telegram или номера в ИТД'
+  }[purpose]
   const minutes = Math.round(config.auth.otpTtl / 60)
   const lines = [`<b>${code}</b> — код для ${action}.`, '', `Код действует ${minutes} мин. Никому его не сообщайте.`]
   if (device) lines.push(`Устройство: ${escapeHtml(device)}`)

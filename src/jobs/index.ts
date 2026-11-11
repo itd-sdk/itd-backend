@@ -5,6 +5,7 @@ import { storage } from '../lib/storage'
 import { errorMeta, logger } from '../lib/logger'
 import { markSessionsRevoked } from '../services/session-store'
 import { redis, rk } from '../redis'
+import { applyDueChanges } from '../modules/auth/contacts'
 
 /** Removes an account for good, subtracting its contributions from other users' counters first */
 export async function purgeAccount(userId: string) {
@@ -75,7 +76,8 @@ type Job = { name: string; everyMs: number; run: () => Promise<unknown> }
 const JOBS: Job[] = [
   { name: 'purge-accounts', everyMs: 10 * 60_000, run: purgeExpiredAccounts },
   { name: 'lift-bans', everyMs: 5 * 60_000, run: liftExpiredBans },
-  { name: 'cleanup-sessions', everyMs: 60 * 60_000, run: cleanupSessions }
+  { name: 'cleanup-sessions', everyMs: 60 * 60_000, run: cleanupSessions },
+  { name: 'contact-changes', everyMs: 5 * 60_000, run: () => applyDueChanges() }
 ]
 
 /** Runs periodic jobs; a redis lock makes sure only one instance executes each run */

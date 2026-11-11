@@ -43,6 +43,13 @@
       "when": 1794396073240,
       "tag": "0005_drop_event",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794396327748,
+      "tag": "0006_contacts",
+      "breakpoints": true
     }
   ]
 }

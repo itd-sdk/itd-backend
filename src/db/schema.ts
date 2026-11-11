@@ -49,6 +49,8 @@ export const accounts = pgTable('accounts', {
   telegram: text('telegram').notNull().unique(),
   // chat that confirmed the account; codes keep going there even if the username changes
   telegramChatId: text('telegram_chat_id'),
+  // optional second login: +digits, shared with the Telegram bot by its owner; codes go to that Telegram
+  phone: text('phone').unique(),
   passwordHash: text('password_hash').notNull(),
   verifiedAt: ts('verified_at'),
   roles: text('roles').array().$type<Role[]>().notNull().default(sql`'{user}'::text[]`),
@@ -86,6 +88,26 @@ export const sessions = pgTable(
     revokeReason: text('revoke_reason')
   },
   (t) => [index('sessions_account_idx').on(t.accountId), index('sessions_expires_idx').on(t.expiresAt)]
+)
+
+// a change of the Telegram or phone that waits out its delay (the «Подождать 7 дней» proof)
+export const contactChanges = pgTable(
+  'contact_changes',
+  {
+    id: id(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'telegram' | 'phone'>().notNull(),
+    newValue: text('new_value').notNull(),
+    // where codes for the new value go once applied
+    newChatId: text('new_chat_id'),
+    appliesAt: ts('applies_at').notNull(),
+    createdAt: createdAt(),
+    canceledAt: ts('canceled_at'),
+    appliedAt: ts('applied_at')
+  },
+  (t) => [index('contact_changes_account_idx').on(t.accountId), index('contact_changes_due_idx').on(t.appliesAt)]
 )
 
 // ---------------------------------------------------------------- files

@@ -6,12 +6,13 @@ import { accounts, sessions } from '../../db/schema'
 import { ApiError, badRequest, conflict, notFound, unauthorized } from '../../lib/errors'
 import { hashPassword, isValidPassword, verifyPassword } from '../../lib/password'
 import { sseResponse } from '../../lib/sse'
-import { assertTelegram, normalizeTelegram, requireTelegramChat } from '../../lib/telegram'
+import { assertTelegram, findPhoneChat, normalizePhone, normalizeTelegram, requirePhoneChat, requireTelegramChat } from '../../lib/telegram'
 import { authPlugin, readAuth } from '../../plugins/auth'
 import { contextPlugin } from '../../plugins/context'
 import { enforceActionLimit } from '../../services/rate-limit'
 import { qrChannel, subscribe } from '../../services/realtime'
 import { SessionModel, SuccessModel, Uuid } from '../../schemas'
+import { contactDelivery, contactsModule, isContactFlow, verifyContactFlow } from './contacts'
 import { assertClaim, consumeQr, decideQr, loadQr, qrTtlMs, scanQr, startQr } from './qr'
 import {
   assertNotBanned,
@@ -21,6 +22,7 @@ import {
   describeClient,
   dropFlow,
   findAccount,
+  findAccountByPhone,
   findAccountByTelegram,
   findSessionByRefreshToken,
   liftExpiredBan,
@@ -44,13 +46,20 @@ const TokenModel = t.Object({
   expiresIn: t.Optional(t.Integer()),
   flowToken: t.Optional(t.String()),
   nextStep: t.Optional(t.String()),
-  otp: t.Optional(t.String({ description: 'Only in development (DEV_EXPOSE_OTP=true)' }))
+  otp: t.Optional(t.String({ description: 'Only in development (DEV_EXPOSE_OTP=true)' })),
+  // contact flows of the settings (attach a phone, change the phone or the Telegram)
+  success: t.Optional(t.Boolean()),
+  mode: t.Optional(t.String()),
+  changeToken: t.Optional(t.String()),
+  proofs: t.Optional(t.Array(t.String())),
+  waitDays: t.Optional(t.Integer())
 })
 
-// the web client and itd-sdk send the login as `email`; it holds a Telegram username here
+// the web client and itd-sdk send the login as `email`; it holds a Telegram username or a phone number here
 const Login = {
-  telegram: t.Optional(t.String({ maxLength: 64, description: 'Telegram username: nick, @nick or t.me/nick' })),
-  email: t.Optional(t.String({ maxLength: 64, description: 'Alias of telegram (field name used by the web client)' }))
+  telegram: t.Optional(t.String({ maxLength: 64, description: 'Telegram username (nick, @nick or t.me/nick) or a phone number' })),
+  email: t.Optional(t.String({ maxLength: 64, description: 'Alias of telegram (field name used by the web client)' })),
+  phone: t.Optional(t.String({ maxLength: 32, description: 'Phone number (the settings flows send it under this name)' }))
 }
 const Credentials = t.Object({ ...Login, password: t.String({ maxLength: 256 }) })
 
@@ -58,6 +67,19 @@ function loginOf(body: { telegram?: string; email?: string }) {
   const telegram = normalizeTelegram(body.telegram ?? body.email ?? '')
   assertTelegram(telegram)
   return telegram
+}
+
+/** Sign-in and recovery take a Telegram nick or a phone attached in the settings */
+function signInLoginOf(body: { telegram?: string; email?: string; phone?: string }) {
+  const phone = normalizePhone(body.phone ?? body.telegram ?? body.email ?? '')
+  return phone ? { phone, telegram: null } : { phone: null, telegram: loginOf(body) }
+}
+
+const echoedLogin = (body: { telegram?: string; email?: string; phone?: string }) => body.phone ?? body.telegram ?? body.email
+
+/** Codes for a phone login go to the Telegram that shared the number, else to the account's own chat */
+async function loginChat(account: { telegram: string; telegramChatId: string | null }, phone: string | null) {
+  return (phone && (await findPhoneChat(phone))) || account.telegramChatId || (await requireTelegramChat(account.telegram))
 }
 
 // comparing against a dummy hash keeps sign-in timing similar for unknown accounts
@@ -77,6 +99,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .use(contextPlugin)
   .use(authPlugin)
   .derive(({ ip, country, deviceId, userAgent }) => ({ client: { ip, country, deviceId, userAgent } }))
+  .use(contactsModule)
 
   .post(
     '/sign-up',
@@ -108,18 +131,26 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .post(
     '/sign-in',
     async ({ body, client, cookie }) => {
-      const telegram = loginOf(body)
-      await enforceActionLimit('sign_in', `${client.ip}:${telegram}`)
+      const login = signInLoginOf(body)
+      await enforceActionLimit('sign_in', `${client.ip}:${login.phone ?? login.telegram}`)
 
-      const account = await findAccountByTelegram(telegram)
+      const account = login.phone ? await findAccountByPhone(login.phone) : await findAccountByTelegram(login.telegram!)
       const valid = await verifyPassword(body.password, account?.passwordHash ?? (await getDummyHash()))
       if (!account || !valid) throw INVALID_CREDENTIALS()
       await liftExpiredBan(account)
       assertNotBanned(account)
 
       if (config.auth.telegramVerification && (config.auth.loginCode || !account.verifiedAt)) {
-        const chatId = account.telegramChatId ?? (await requireTelegramChat(telegram))
-        const { flowToken, otp } = await startFlow({ purpose: 'login', telegram, chatId, device: describeClient(client), accountId: account.id, passwordHash: null })
+        const chatId = await loginChat(account, login.phone)
+        const { flowToken, otp } = await startFlow({
+          purpose: 'login',
+          telegram: account.telegram,
+          phone: login.phone,
+          chatId,
+          device: describeClient(client),
+          accountId: account.id,
+          passwordHash: null
+        })
         return flowResponse(flowToken, 'verify_email', otp)
       }
       const { accessToken, refreshToken } = await createSession(account, client)
@@ -132,8 +163,9 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .post(
     '/verify-otp',
     async ({ body, client, cookie }) => {
-      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
+      const flow = await loadFlow(body.flowToken, echoedLogin(body))
       await checkOtp(body.flowToken, flow, body.otp)
+      if (isContactFlow(flow)) return verifyContactFlow(body.flowToken, flow)
 
       if (flow.purpose === 'reset') {
         flow.verified = true
@@ -176,9 +208,9 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .post(
     '/resend-otp',
     async ({ body }) => {
-      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
+      const flow = await loadFlow(body.flowToken, echoedLogin(body))
       const otp = await resendOtp(body.flowToken, flow)
-      return { success: true, expiresIn: config.auth.otpTtl, ...(config.auth.exposeOtp ? { otp } : {}) }
+      return { success: true, expiresIn: config.auth.otpTtl, ...contactDelivery(flow), ...(config.auth.exposeOtp ? { otp } : {}) }
     },
     {
       body: t.Object({ flowToken: t.String({ maxLength: 128 }), ...Login }),
@@ -189,14 +221,17 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .post(
     '/forgot-password',
     async ({ body, client }) => {
-      const telegram = loginOf(body)
+      const login = signInLoginOf(body)
       await enforceActionLimit('otp', client.ip)
-      const account = await findAccountByTelegram(telegram)
+      const account = login.phone ? await findAccountByPhone(login.phone) : await findAccountByTelegram(login.telegram!)
       // the bot check does not depend on the account, so unknown and existing accounts look the same
-      const chatId = account?.telegramChatId ?? (await requireTelegramChat(telegram))
+      const chatId = login.phone
+        ? ((await findPhoneChat(login.phone)) ?? account?.telegramChatId ?? (await requirePhoneChat(login.phone)))
+        : (account?.telegramChatId ?? (await requireTelegramChat(login.telegram!)))
       const { flowToken, otp } = await startFlow({
         purpose: 'reset',
-        telegram,
+        telegram: account?.telegram ?? login.telegram ?? '',
+        phone: login.phone,
         chatId: account ? chatId : null,
         device: describeClient(client),
         accountId: account?.id ?? null,
@@ -214,7 +249,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .post(
     '/reset-password',
     async ({ body }) => {
-      const flow = await loadFlow(body.flowToken, body.telegram ?? body.email)
+      const flow = await loadFlow(body.flowToken, echoedLogin(body))
       if (flow.purpose !== 'reset') throw badRequest('Invalid flow', 'INVALID_FLOW_TOKEN')
       if (!flow.verified) await checkOtp(body.flowToken!, flow, body.otp)
       if (!flow.accountId) throw badRequest('Invalid code', 'INVALID_OTP')

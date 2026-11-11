@@ -5,19 +5,22 @@ in Redis and this bot delivers them. Contract (shared REDIS_URL / REDIS_PREFIX w
   <prefix>tg:chats      hash  username (lowercase, no @) -> chat id
   <prefix>tg:usernames  hash  chat id -> username
   <prefix>tg:outbox     list  JSON {"chatId", "text", "expiresAt"} (ms), RPUSH by the backend
+  <prefix>tg:phones     hash  phone (+digits) -> chat id, from «Поделиться номером» (own contact only)
+  <prefix>tg:chatphones hash  chat id -> phone
 """
 import asyncio
 import json
 import logging
 import os
+import re
 import time
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from redis.asyncio import Redis
 
 BOT_TOKEN = os.environ['BOT_TOKEN']
@@ -28,10 +31,17 @@ SITE_URL = os.getenv('SITE_URL', '').rstrip('/')
 CHATS = f'{PREFIX}tg:chats'
 USERNAMES = f'{PREFIX}tg:usernames'
 OUTBOX = f'{PREFIX}tg:outbox'
+PHONES = f'{PREFIX}tg:phones'
+CHAT_PHONES = f'{PREFIX}tg:chatphones'
 
 log = logging.getLogger('openitd-bot')
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
 dp = Dispatcher()
+
+SHARE_PHONE = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text='📱 Поделиться номером', request_contact=True)]],
+    resize_keyboard=True,
+)
 
 NO_USERNAME = (
     'У вашего аккаунта Telegram нет имени пользователя (@username).\n\n'
@@ -68,7 +78,33 @@ async def on_start(message: Message) -> None:
     await message.answer(
         f'Готово! Telegram <b>@{username}</b> подключён.\n\n'
         f'Вернитесь на сайт{site()} и укажите ник <b>@{username}</b> — '
-        'коды для регистрации и входа будут приходить сюда.'
+        'коды для регистрации и входа будут приходить сюда.\n\n'
+        'Чтобы входить и по номеру телефона, нажмите «Поделиться номером» и привяжите его в настройках сайта.',
+        reply_markup=SHARE_PHONE,
+    )
+
+
+@dp.message(F.contact)
+async def on_contact(message: Message) -> None:
+    """Remembers which chat a phone belongs to; only the sender's own contact counts."""
+    contact, user = message.contact, message.from_user
+    if message.chat.type != ChatType.PRIVATE or user is None or contact is None:
+        return
+    if contact.user_id != user.id:
+        await message.answer('Можно привязать только свой номер: нажмите кнопку «Поделиться номером».', reply_markup=SHARE_PHONE)
+        return
+    phone = '+' + re.sub(r'\D', '', contact.phone_number)
+    chat_id = str(message.chat.id)
+    previous = await redis.hget(CHAT_PHONES, chat_id)
+    if previous and previous != phone and await redis.hget(PHONES, previous) == chat_id:
+        await redis.hdel(PHONES, previous)
+    await redis.hset(PHONES, phone, chat_id)
+    await redis.hset(CHAT_PHONES, chat_id, phone)
+    await link(message)
+    await message.answer(
+        f'Номер <b>{phone}</b> подключён к этому Telegram.\n\n'
+        f'Привяжите его на сайте{site()}: «Настройки» → «Безопасность» → «Телефон». '
+        'После этого можно входить по номеру, коды будут приходить сюда.'
     )
 
 
@@ -78,7 +114,7 @@ async def on_message(message: Message) -> None:
     if username is None:
         await message.answer(NO_USERNAME)
         return
-    await message.answer(f'Я присылаю коды для входа в ИТД{site()}. Ваш ник для сайта: <b>@{username}</b>.')
+    await message.answer(f'Я присылаю коды для входа в ИТД{site()}. Ваш ник для сайта: <b>@{username}</b>.', reply_markup=SHARE_PHONE)
 
 
 async def deliver(bot: Bot) -> None:
