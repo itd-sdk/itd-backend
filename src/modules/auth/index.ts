@@ -23,7 +23,7 @@ import {
   describeClient,
   dropFlow,
   findAccount,
-  findAccountByPhone,
+  findAccountForPhone,
   findAccountByTelegram,
   findSessionByRefreshToken,
   liftExpiredBan,
@@ -138,7 +138,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
       const login = signInLoginOf(body)
       await enforceActionLimit('sign_in', `${client.ip}:${login.phone ?? login.telegram}`)
 
-      const account = login.phone ? await findAccountByPhone(login.phone) : await findAccountByTelegram(login.telegram!)
+      const account = login.phone ? await findAccountForPhone(login.phone) : await findAccountByTelegram(login.telegram!)
       const valid = await verifyPassword(body.password, account?.passwordHash ?? (await getDummyHash()))
       if (!account || !valid) throw INVALID_CREDENTIALS()
       await liftExpiredBan(account)
@@ -228,7 +228,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
     async ({ body, client }) => {
       const login = signInLoginOf(body)
       await enforceActionLimit('otp', client.ip)
-      const account = login.phone ? await findAccountByPhone(login.phone) : await findAccountByTelegram(login.telegram!)
+      const account = login.phone ? await findAccountForPhone(login.phone) : await findAccountByTelegram(login.telegram!)
       // the bot check does not depend on the account, so unknown and existing accounts look the same
       const chatId = login.phone
         ? ((await findPhoneChat(login.phone)) ?? account?.telegramChatId ?? (await requirePhoneChat(login.phone)))

@@ -9,11 +9,13 @@ import { logger } from './logger'
  *   <prefix>tg:usernames hash chat id -> username
  *   <prefix>tg:outbox  list  JSON {chatId, text, expiresAt}, pushed here and popped (BLPOP) by the bot
  *   <prefix>tg:phones  hash  phone (+digits) -> chat id, written by the bot when a user shares their own contact
+ *   <prefix>tg:chatphones hash chat id -> phone
  */
 const CHATS = () => rk('tg', 'chats')
 const OUTBOX = () => rk('tg', 'outbox')
 const PHONES = () => rk('tg', 'phones')
 const USERNAMES = () => rk('tg', 'usernames')
+const CHAT_PHONES = () => rk('tg', 'chatphones')
 
 const USERNAME_RE = /^[a-z][a-z0-9_]{3,31}$/
 
@@ -45,6 +47,11 @@ export function normalizePhone(value: string) {
 /** Chat of the Telegram account that shared this number with the bot */
 export async function findPhoneChat(phone: string) {
   return redis.hget(PHONES(), phone)
+}
+
+/** The number a chat shared with the bot */
+export async function findChatPhone(chatId: string) {
+  return redis.hget(CHAT_PHONES(), chatId)
 }
 
 /** Telegram username of a chat (null when the account has none) */

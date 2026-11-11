@@ -19,8 +19,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
-from aiogram.filters import CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.types import BotCommand, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from redis.asyncio import Redis
 
 BOT_TOKEN = os.environ['BOT_TOKEN']
@@ -69,9 +69,23 @@ def site() -> str:
     return f' {SITE_URL}' if SITE_URL else ''
 
 
+PHONE_HINT = (
+    'Номер телефона необязателен. Если хотите входить и по нему, нажмите «Поделиться номером» — '
+    'он привяжется к аккаунту ИТД с этим Telegram.'
+)
+
+
+async def ask_phone(message: Message) -> None:
+    await message.answer(PHONE_HINT, reply_markup=SHARE_PHONE)
+
+
 @dp.message(CommandStart())
-async def on_start(message: Message) -> None:
+async def on_start(message: Message, command: CommandObject) -> None:
     username = await link(message)
+    # t.me/<bot>?start=phone: the «Привязать» button of the site settings
+    if command.args == 'phone':
+        await ask_phone(message)
+        return
     if username is None:
         await message.answer(NO_USERNAME)
         return
@@ -79,9 +93,14 @@ async def on_start(message: Message) -> None:
         f'Готово! Telegram <b>@{username}</b> подключён.\n\n'
         f'Вернитесь на сайт{site()} и укажите ник <b>@{username}</b> — '
         'коды для регистрации и входа будут приходить сюда.\n\n'
-        'Чтобы входить и по номеру телефона, нажмите «Поделиться номером» и привяжите его в настройках сайта.',
-        reply_markup=SHARE_PHONE,
+        'Номер телефона необязателен; привязать его можно командой /phone.'
     )
+
+
+@dp.message(Command('phone'))
+async def on_phone(message: Message) -> None:
+    await link(message)
+    await ask_phone(message)
 
 
 @dp.message(F.contact)
@@ -102,9 +121,10 @@ async def on_contact(message: Message) -> None:
     await redis.hset(CHAT_PHONES, chat_id, phone)
     await link(message)
     await message.answer(
-        f'Номер <b>{phone}</b> подключён к этому Telegram.\n\n'
-        f'Привяжите его на сайте{site()}: «Настройки» → «Безопасность» → «Телефон». '
-        'После этого можно входить по номеру, коды будут приходить сюда.'
+        f'Номер <b>{phone}</b> привязан к этому Telegram.\n\n'
+        f'Если у вас есть аккаунт ИТД{site()} с этим Telegram, номер появится в «Настройки» → «Безопасность» → '
+        '«Телефон», и по нему можно будет входить. Если аккаунта нет — зарегистрируйтесь по номеру, коды будут приходить сюда.',
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -114,7 +134,7 @@ async def on_message(message: Message) -> None:
     if username is None:
         await message.answer(NO_USERNAME)
         return
-    await message.answer(f'Я присылаю коды для входа в ИТД{site()}. Ваш ник для сайта: <b>@{username}</b>.', reply_markup=SHARE_PHONE)
+    await message.answer(f'Я присылаю коды для входа в ИТД{site()}. Ваш ник для сайта: <b>@{username}</b>. Привязать номер телефона: /phone.')
 
 
 async def deliver(bot: Bot) -> None:
@@ -160,6 +180,10 @@ async def deliver(bot: Bot) -> None:
 async def main() -> None:
     logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'), format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    await bot.set_my_commands([
+        BotCommand(command='start', description='Подключить Telegram к ИТД'),
+        BotCommand(command='phone', description='Привязать номер телефона'),
+    ])
     worker = asyncio.create_task(deliver(bot))
     try:
         await dp.start_polling(bot)

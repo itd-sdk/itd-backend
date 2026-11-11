@@ -252,3 +252,36 @@ describe('legal pages', () => {
     expect((await api('GET', '/legal-documents/social/terms')).status).toBe(404)
   })
 })
+
+describe('a number shared with the bot (/phone)', () => {
+  /** What the bot stores when the user shares their own contact */
+  async function shareFromChat(chatId: string, phone: string) {
+    await redis.hset(rk('tg', 'phones'), phone, chatId)
+    await redis.hset(rk('tg', 'chatphones'), chatId, phone)
+  }
+
+  test('attaches to the account of that Telegram without a code', async () => {
+    const user = await createUser()
+    expect((await api('GET', '/v1/auth/methods', auth(user))).body.phone).toBeNull()
+    const chatId = (await redis.hget(rk('tg', 'chats'), user.telegram))!
+    const phone = newPhone()
+    await shareFromChat(chatId, phone)
+    expect((await api('GET', '/v1/auth/methods', auth(user))).body.phone).toBe(phone)
+
+    // signing in by the number works straight away for another account too
+    const other = await createUser()
+    const otherPhone = newPhone()
+    await shareFromChat((await redis.hget(rk('tg', 'chats'), other.telegram))!, otherPhone)
+    expect((await api('POST', '/v1/auth/sign-in', { body: { email: otherPhone, password: other.password } })).status).toBe(200)
+  })
+
+  test('a number taken by another account is not moved', async () => {
+    const owner = await createUser()
+    const phone = newPhone()
+    await attachPhone(owner, phone)
+    const user = await createUser()
+    await shareFromChat((await redis.hget(rk('tg', 'chats'), user.telegram))!, phone)
+    expect((await api('GET', '/v1/auth/methods', auth(user))).body.phone).toBeNull()
+    expect((await api('GET', '/v1/auth/methods', auth(owner))).body.phone).toBe(phone)
+  })
+})

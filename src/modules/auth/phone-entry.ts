@@ -19,7 +19,7 @@ import {
   dropFlow,
   type Flow,
   findAccount,
-  findAccountByPhone,
+  findAccountForPhone,
   findAccountByTelegram,
   liftExpiredBan,
   loadFlow,
@@ -66,7 +66,7 @@ async function signIn(account: { id: string; roles: string[] | null }, client: C
 /** The code was right: find or create the account, then sign in or ask for its password */
 export async function verifyPhoneEntry(flowToken: string, flow: Flow, client: ClientContext, cookie: Cookies) {
   const phone = flow.phone!
-  let account = await findAccountByPhone(phone)
+  let account = await findAccountForPhone(phone)
   if (!account) {
     const username = await findChatUsername(flow.chatId!)
     const byTelegram = username ? await findAccountByTelegram(username) : null
@@ -147,7 +147,7 @@ export const phoneEntryModule = new Elysia({ tags: ['Auth'] })
       if (!consented) throw badRequest('Документы обновились', 'LEGAL_CONTEXT_EXPIRED')
       await enforceActionLimit('otp', phoneClient.ip)
       const chatId = await requirePhoneChat(phone)
-      const existing = await findAccountByPhone(phone)
+      const existing = await findAccountForPhone(phone)
       const { flowToken, otp } = await startFlow({
         purpose: 'phone_entry',
         telegram: existing?.telegram ?? '',

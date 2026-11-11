@@ -6,7 +6,7 @@ import { accounts, type Role, sessions, users } from '../../db/schema'
 import { ApiError, badRequest, unauthorized } from '../../lib/errors'
 import { randomHexToken, randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
 import { signAccessToken } from '../../lib/jwt'
-import { normalizePhone, normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
+import { findChatPhone, findChatUsername, findPhoneChat, findTelegramChat, normalizePhone, normalizeTelegram, otpMessage, sendTelegram } from '../../lib/telegram'
 import { addDays, iso } from '../../lib/time'
 import { parseUserAgent } from '../../lib/useragent'
 import { redis, rk } from '../../redis'
@@ -38,6 +38,34 @@ export async function findAccountByTelegram(telegram: string, executor: Executor
 export async function findAccountByPhone(phone: string, executor: Executor = db) {
   const [row] = await executor.select().from(accounts).where(eq(accounts.phone, phone)).limit(1)
   return row ?? null
+}
+
+/*
+ * A number shared with the bot («Поделиться номером», /phone) belongs to the Telegram that shared it: the account of
+ * that Telegram gets it without a code, the first time it is needed (settings, sign-in by phone).
+ */
+export async function adoptBotPhone(account: AccountRow) {
+  if (account.phone) return account
+  const chatId = account.telegramChatId ?? (await findTelegramChat(account.telegram))
+  const phone = chatId ? await findChatPhone(chatId) : null
+  if (!phone || (await findPhoneChat(phone)) !== chatId || (await findAccountByPhone(phone))) return account
+  await db.update(accounts).set({ phone, updatedAt: new Date() }).where(eq(accounts.id, account.id))
+  return { ...account, phone }
+}
+
+/** The account of a phone: attached in the settings, or shared with the bot by the account's Telegram */
+export async function findAccountForPhone(phone: string) {
+  const known = await findAccountByPhone(phone)
+  if (known) return known
+  const chatId = await findPhoneChat(phone)
+  if (!chatId) return null
+  const [byChat] = await db.select().from(accounts).where(eq(accounts.telegramChatId, chatId)).limit(1)
+  const username = byChat ? null : await findChatUsername(chatId)
+  const candidate = byChat ?? (username ? await findAccountByTelegram(username) : null)
+  if (!candidate || candidate.phone) return null
+  // the chat that shared the number is this account's Telegram
+  await db.update(accounts).set({ phone, updatedAt: new Date() }).where(eq(accounts.id, candidate.id))
+  return { ...candidate, phone }
 }
 
 export async function findAccount(id: string, executor: Executor = db) {

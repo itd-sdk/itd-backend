@@ -46,6 +46,39 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
   })
   const say = (from: string, to: string) => swap(JSON.stringify(from), JSON.stringify(to), `text: ${from}`)
   const botLink = `@${bot}`
+  const telegramSignUp = (h: string) => {
+    const field = (label: string, input: string) => `${h}("label",{className:__pa.field,children:[${JSON.stringify(label)},${h}("input",${input})]})`
+    return (
+      `const __tgErrors={INVALID_PASSWORD:"Пароль: от 8 до 128 символов без пробелов.",INVALID_OTP:"Неверный код.",INVALID_OTP_FORMAT:"Введите код из Telegram.",` +
+      `OTP_ATTEMPTS_EXCEEDED:"Слишком много попыток. Начните заново.",INVALID_FLOW_TOKEN:"Время вышло. Начните заново.",RATE_LIMIT_EXCEEDED:"Слишком много попыток. Подождите немного."};` +
+      `async function __tgSubmit(ev){ev.preventDefault();const f=ev.currentTarget,el=f.elements,err=f.querySelector("[data-error]"),btn=f.querySelector("button[type=submit]");` +
+      `const show=m=>{err.textContent=m||"";err.hidden=!m};show("");` +
+      `const post=(path,body)=>fetch("/api/v1/auth"+path,{method:"POST",credentials:"include",headers:{"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest"},body:JSON.stringify(body)})` +
+      `.then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok){const e=j.error||{};throw new Error(__tgErrors[e.code]||e.message||"Не удалось выполнить запрос")}return j});` +
+      `const nick=el.telegram.value.trim();btn.disabled=!0;` +
+      `try{if(!f.dataset.flow){const r=await post("/sign-up",{email:nick,password:el.password.value});if(r.accessToken){location.href="/onboarding";return}` +
+      `f.dataset.flow=r.flowToken;f.querySelector("[data-step=credentials]").hidden=!0;f.querySelector("[data-step=code]").hidden=!1;el.otp.focus()}` +
+      `else{await post("/verify-otp",{email:nick,otp:el.otp.value.trim(),flowToken:f.dataset.flow});location.href="/onboarding"}}` +
+      `catch(e){show(e.message)}finally{btn.disabled=!1}}` +
+      `function __TgSignUp(){return ${h}("div",{className:__pa.card,children:[` +
+      `${h}("div",{className:__pa.brand,children:${h}(__Logo,{})}),` +
+      `${h}("h1",{children:"Регистрация"}),` +
+      `${h}("p",{className:__pa.description,children:["Откройте бота ",${h}("a",{href:"https://t.me/${bot}",target:"_blank",rel:"noopener noreferrer",children:"@${bot}"}),` +
+      `" и нажмите «Старт». Затем укажите ник в Telegram и придумайте пароль — код подтверждения придёт в бот."]}),` +
+      `${h}("form",{className:__pa.form,onSubmit:__tgSubmit,children:[` +
+      `${h}("div",{"data-step":"credentials",children:[` +
+      field('Ник в Telegram', '{name:"telegram",placeholder:"@username",autoComplete:"username",autoCapitalize:"off",spellCheck:!1,maxLength:64,required:!0}') + ',' +
+      field('Пароль', '{name:"password",type:"password",autoComplete:"new-password",minLength:8,maxLength:128,required:!0}') + ']}),' +
+      `${h}("div",{"data-step":"code",hidden:!0,children:` +
+      field('Код из Telegram', '{name:"otp",inputMode:"numeric",autoComplete:"one-time-code",maxLength:8}') + '}),' +
+      `${h}("p",{className:__pa.error,role:"alert","data-error":!0,hidden:!0}),` +
+      `${h}(__Btn,{type:"submit",fullWidth:!0,size:"lg",children:"Продолжить"})]}),` +
+      `${h}("p",{className:__pa.terms,children:["Номер телефона необязателен. ",${h}("a",{href:"/register?phone",children:"Зарегистрироваться по номеру"})]}),` +
+      `${h}("p",{className:__pa.terms,children:["Есть аккаунт? ",${h}("a",{href:"/login",children:"Войти"})]}),` +
+      `${h}("p",{className:__pa.terms,children:["Регистрируясь, вы подтверждаете, что прочитали ",${h}("a",{href:"/privacy",target:"_blank",rel:"noopener noreferrer",children:"информацию о проекте"}),"."]})` +
+      `]})}`
+    )
+  }
   return [
     {
       name: 'login field: Telegram instead of E-Mail',
@@ -260,6 +293,34 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       replace: (m) => `${m}${botErrors()}`,
       done: /SAME_PHONE:"[^"]*",PHONE_NOT_SHARED:/
     },
+    {
+      // the phone is optional: /register signs up with a Telegram nick and a password (the code comes from the bot),
+      // the client's phone sign-up stays at /register?phone. Plain DOM handlers: the chunk has no React hooks
+      name: 'sign-up: Telegram nick, phone optional',
+      find: /import\{u as ([\w$]+)\}from"(\.\/index-[\w-]+\.js)";import\{P as ([\w$]+)\}from"(\.\/index-[\w-]+\.js)";([\s\S]*?)import"(\.\/PhoneAccess\.module-[\w-]+\.js)";([\s\S]*?)const ([\w$]+)=[\w$]+=>\1\(\3,\{intent:"sign-up"\}\);/g,
+      replace: (_, h, main, phoneFlow, phoneFile, between, styles, rest, register) =>
+        `import{u as ${h},B as __Btn,af as __Logo}from"${main}";import{P as ${phoneFlow}}from"${phoneFile}";${between}` +
+        `import{s as __pa}from"${styles}";${rest}${telegramSignUp(h)}` +
+        `const ${register}=e=>new URLSearchParams(location.search).has("phone")?${h}(${phoneFlow},{intent:"sign-up"}):${h}(__TgSignUp,{});`,
+      done: /function __TgSignUp\(\)/
+    },
+    {
+      name: 'sign-up by phone: link to the Telegram sign-up',
+      find: /children:\["Уже есть аккаунт\? ",([\w$]+)\("a",\{href:"\/login",children:"Войти"\}\)\]/g,
+      replace: (_, h) => `children:["Уже есть аккаунт? ",${h}("a",{href:"/login",children:"Войти"})," · ",${h}("a",{href:"/register",children:"Без номера, по нику Telegram"})]`,
+      done: /children:"Без номера, по нику Telegram"/
+    },
+    {
+      // the phone is attached through the bot (/phone): the button opens it, the rows reload when the user is back
+      name: 'settings: attach the phone in the bot',
+      find: /([\w$]+)=async\(\)=>\{try\{const\[([\w$]+),([\w$]+)\]=await Promise\.all\(\[([\w$]+)\.methods\(\),\4\.pending\(\)\]\)([\s\S]{0,6000}?)onClick:\(\)=>([\w$]+)\(([\w$]+)\?\.phone\?\{change:"phone"\}:"attachPhone"\)/g,
+      replace: (_, load, a, b, api, middle, open, methods) =>
+        `${load}=async()=>{try{const[${a},${b}]=await Promise.all([${api}.methods(),${api}.pending()])${middle}` +
+        `onClick:()=>{if(${methods}?.phone)return ${open}({change:"phone"});window.addEventListener("focus",()=>${load}(),{once:!0});` +
+        `window.open("https://t.me/${bot}?start=phone","_blank","noopener,noreferrer")}`,
+      done: /\?start=phone","_blank","noopener,noreferrer"\)\}/
+    },
+    say('Номер не привязан', 'Не привязан — можно привязать в боте'),
     {
       // a source patched for another bot
       name: 'bot username',

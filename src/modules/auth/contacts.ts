@@ -22,7 +22,7 @@ import { authPlugin } from '../../plugins/auth'
 import { contextPlugin } from '../../plugins/context'
 import { redis, rk } from '../../redis'
 import { enforceActionLimit } from '../../services/rate-limit'
-import { describeClient, dropFlow, type Flow, findAccount, findAccountByPhone, findAccountByTelegram, startFlow } from './service'
+import { adoptBotPhone, describeClient, dropFlow, type Flow, findAccount, findAccountByPhone, findAccountByTelegram, startFlow } from './service'
 
 /*
  * Ways to sign in, as the web client's «Безопасность» settings show them: the phone, the "email" (here the
@@ -194,7 +194,7 @@ export const contactsModule = new Elysia({ tags: ['Auth'] })
     '/methods',
     async ({ auth }) => {
       await applyDueChanges(auth.accountId)
-      const account = await requireLoaded(auth.accountId)
+      const account = await adoptBotPhone(await requireLoaded(auth.accountId))
       return { phone: account.phone, email: telegramLabel(account.telegram), telegram: account.telegram, hasPassword: !!account.passwordHash }
     },
     { account: true, detail: { summary: 'Ways to sign in: phone, Telegram (as `email`) and password' } }
