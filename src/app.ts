@@ -9,6 +9,7 @@ import { commentsModule } from './modules/comments'
 import { dwellModule } from './modules/dwell'
 import { filesModule } from './modules/files'
 import { hashtagsModule } from './modules/hashtags'
+import { legalModule } from './modules/legal'
 import { notificationsModule } from './modules/notifications'
 import { platformModule } from './modules/platform'
 import { portalModule } from './modules/portal'
@@ -53,6 +54,7 @@ export function createApp() {
     .use(verificationModule)
     .use(dwellModule)
     .use(portalModule)
+    .use(legalModule)
     .use(adminModule)
 
   return new Elysia({ serve: { idleTimeout: 120, maxRequestBodySize: config.storage.maxVideoSize + 1024 * 1024 } })

@@ -216,7 +216,7 @@ export function readRefreshCookie(cookie: Cookies, body?: unknown) {
 
 // ---------------------------------------------------------------- one-time code flows
 
-export type FlowPurpose = 'signup' | 'login' | 'reset' | 'attach_phone' | 'change_phone' | 'change_telegram'
+export type FlowPurpose = 'signup' | 'login' | 'reset' | 'phone_entry' | 'attach_phone' | 'change_phone' | 'change_telegram'
 export type Flow = {
   purpose: FlowPurpose
   telegram: string

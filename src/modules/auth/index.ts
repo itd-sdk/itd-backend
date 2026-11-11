@@ -13,6 +13,7 @@ import { enforceActionLimit } from '../../services/rate-limit'
 import { qrChannel, subscribe } from '../../services/realtime'
 import { SessionModel, SuccessModel, Uuid } from '../../schemas'
 import { contactDelivery, contactsModule, isContactFlow, verifyContactFlow } from './contacts'
+import { phoneEntryModule, verifyPhoneEntry } from './phone-entry'
 import { assertClaim, consumeQr, decideQr, loadQr, qrTtlMs, scanQr, startQr } from './qr'
 import {
   assertNotBanned,
@@ -52,7 +53,9 @@ const TokenModel = t.Object({
   mode: t.Optional(t.String()),
   changeToken: t.Optional(t.String()),
   proofs: t.Optional(t.Array(t.String())),
-  waitDays: t.Optional(t.Integer())
+  waitDays: t.Optional(t.Integer()),
+  // phone sign-in: the password is asked after the code
+  step: t.Optional(t.String())
 })
 
 // the web client and itd-sdk send the login as `email`; it holds a Telegram username or a phone number here
@@ -100,12 +103,13 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .use(authPlugin)
   .derive(({ ip, country, deviceId, userAgent }) => ({ client: { ip, country, deviceId, userAgent } }))
   .use(contactsModule)
+  .use(phoneEntryModule)
 
   .post(
     '/sign-up',
     async ({ body, client, cookie, set }) => {
       const telegram = loginOf(body)
-      if (!isValidPassword(body.password)) throw badRequest('Password must be 10-128 printable ASCII characters', 'INVALID_PASSWORD')
+      if (!isValidPassword(body.password)) throw badRequest('Password must be 8-128 printable ASCII characters', 'INVALID_PASSWORD')
       await enforceActionLimit('sign_in', client.ip)
       if (await findAccountByTelegram(telegram)) throw ALREADY_REGISTERED()
 
@@ -166,6 +170,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
       const flow = await loadFlow(body.flowToken, echoedLogin(body))
       await checkOtp(body.flowToken, flow, body.otp)
       if (isContactFlow(flow)) return verifyContactFlow(body.flowToken, flow)
+      if (flow.purpose === 'phone_entry') return verifyPhoneEntry(body.flowToken, flow, client, cookie)
 
       if (flow.purpose === 'reset') {
         flow.verified = true
@@ -253,7 +258,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
       if (flow.purpose !== 'reset') throw badRequest('Invalid flow', 'INVALID_FLOW_TOKEN')
       if (!flow.verified) await checkOtp(body.flowToken!, flow, body.otp)
       if (!flow.accountId) throw badRequest('Invalid code', 'INVALID_OTP')
-      if (!isValidPassword(body.newPassword)) throw badRequest('Password must be 10-128 printable ASCII characters', 'INVALID_PASSWORD')
+      if (!isValidPassword(body.newPassword)) throw badRequest('Password must be 8-128 printable ASCII characters', 'INVALID_PASSWORD')
 
       await db
         .update(accounts)
@@ -283,7 +288,7 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
       // the SDK sends oldPassword, the web client currentPassword
       const oldPassword = body.oldPassword ?? body.currentPassword
       if (oldPassword === undefined) throw badRequest('Old password is required', 'VALIDATION_ERROR')
-      if (!isValidPassword(body.newPassword)) throw badRequest('Password must be 10-128 printable ASCII characters', 'INVALID_PASSWORD')
+      if (!isValidPassword(body.newPassword)) throw badRequest('Password must be 8-128 printable ASCII characters', 'INVALID_PASSWORD')
       if (body.newPassword === oldPassword) throw badRequest('New password must differ from the old one', 'SAME_PASSWORD')
       if (!(await verifyPassword(oldPassword, account.passwordHash))) throw badRequest('Old password is incorrect', 'INVALID_OLD_PASSWORD')
 

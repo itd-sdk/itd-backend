@@ -5,7 +5,7 @@ import { db } from '../../db/client'
 import { accounts, contactChanges, sessions } from '../../db/schema'
 import { ApiError, badRequest, conflict, notFound } from '../../lib/errors'
 import { randomOtp, randomToken, safeEqual, sha256 } from '../../lib/crypto'
-import { verifyPassword } from '../../lib/password'
+import { hashPassword, isValidPassword, verifyPassword } from '../../lib/password'
 import {
   assertTelegram,
   findPhoneChat,
@@ -64,7 +64,7 @@ export const isContactFlow = (flow: Flow) => flow.purpose === 'attach_phone' || 
 
 /** Delivery info the client expects with a phone code */
 export function contactDelivery(flow: Flow) {
-  if (!isContactFlow(flow)) return {}
+  if (!isContactFlow(flow) && flow.purpose !== 'phone_entry') return {}
   return { delivery: DELIVERY, retryIn: Math.max(0, Math.ceil(config.auth.otpResendCooldown - (Date.now() - flow.sentAt) / 1000)) }
 }
 
@@ -158,7 +158,7 @@ export async function verifyContactFlow(flowToken: string, flow: Flow) {
     return { success: true }
   }
   const kind: Kind = flow.purpose === 'change_phone' ? 'phone' : 'telegram'
-  const proofs: Proof[] = ['password', 'email_code', ...(account.phone ? (['phone_code'] as const) : [])]
+  const proofs: Proof[] = [...(account.passwordHash ? (['password'] as const) : []), 'email_code', ...(account.phone ? (['phone_code'] as const) : [])]
   const changeToken = randomToken(24)
   const change: Change = { accountId: account.id, kind, value: kind === 'phone' ? flow.phone! : flow.newTelegram!, chatId: flow.chatId!, proofs }
   await redis.set(changeKey(changeToken), JSON.stringify(change), 'EX', CHANGE_TTL_SECONDS)
@@ -195,7 +195,7 @@ export const contactsModule = new Elysia({ tags: ['Auth'] })
     async ({ auth }) => {
       await applyDueChanges(auth.accountId)
       const account = await requireLoaded(auth.accountId)
-      return { phone: account.phone, email: telegramLabel(account.telegram), telegram: account.telegram, hasPassword: true }
+      return { phone: account.phone, email: telegramLabel(account.telegram), telegram: account.telegram, hasPassword: !!account.passwordHash }
     },
     { account: true, detail: { summary: 'Ways to sign in: phone, Telegram (as `email`) and password' } }
   )
@@ -275,13 +275,26 @@ export const contactsModule = new Elysia({ tags: ['Auth'] })
     }
   )
 
-  // every openitd account has a Telegram and a password from the start
+  // every openitd account has a Telegram from the start
   .post('/email/attach', () => {
     throw conflict('К аккаунту уже привязан Telegram', 'ALREADY_ATTACHED')
   }, { account: true })
-  .post('/set-password', () => {
-    throw conflict('Пароль уже создан, его можно сменить', 'PASSWORD_ALREADY_SET')
-  }, { account: true })
+
+  // accounts created by phone start without a password
+  .post(
+    '/set-password',
+    async ({ body, auth }) => {
+      const account = await requireLoaded(auth.accountId)
+      if (account.passwordHash) throw conflict('Пароль уже создан, его можно сменить', 'PASSWORD_ALREADY_SET')
+      if (!isValidPassword(body.password)) throw badRequest('Password must be 8-128 printable ASCII characters', 'INVALID_PASSWORD')
+      await db
+        .update(accounts)
+        .set({ passwordHash: await hashPassword(body.password), passwordChangedAt: new Date(), updatedAt: new Date() })
+        .where(eq(accounts.id, account.id))
+      return { success: true }
+    },
+    { account: true, body: t.Object({ password: t.String({ maxLength: 256 }) }), detail: { summary: 'Create the first password' } }
+  )
 
   .post(
     '/change/proof',

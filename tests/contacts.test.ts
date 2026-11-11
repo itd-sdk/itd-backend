@@ -164,3 +164,91 @@ describe('changing the Telegram or the phone', () => {
     expect((await api('GET', '/v1/auth/methods', auth(user))).body.phone).toBe(second)
   })
 })
+
+describe('sign-in and sign-up by phone', () => {
+  const consent = async () => (await api('GET', '/v1/auth/consent?flow=phone_entry')).body
+  const start = async (phone: string) => {
+    const { contextToken, protocolVersion } = await consent()
+    return api('POST', '/v1/auth/phone/start', { body: { phone, captcha: 'captcha-disabled', legal: { protocolVersion, contextToken } } })
+  }
+  const verify = (phone: string, started: { body: any }) =>
+    api('POST', '/v1/auth/verify-otp', { body: { phone, flowToken: started.body.flowToken, otp: started.body.otp } })
+
+  test('the consent links the page about this copy', async () => {
+    const body = await consent()
+    expect(body).toMatchObject({ protocolVersion: 2, bundle: { flow: 'phone_entry', submitLabel: 'Получить код', documents: [{ slug: 'privacy', url: '/legal/privacy' }] } })
+    expect(body.expiresAt).toBeGreaterThan(Date.now())
+    // a consent is used once
+    const phone = newPhone()
+    await sharePhone(phone)
+    const legal = { protocolVersion: 2, contextToken: body.contextToken }
+    expect((await api('POST', '/v1/auth/phone/start', { body: { phone, legal } })).status).toBe(200)
+    expect((await api('POST', '/v1/auth/phone/start', { body: { phone, legal } })).body.error.code).toBe('LEGAL_CONTEXT_EXPIRED')
+  })
+
+  test('a new number creates an account for the Telegram that shared it', async () => {
+    const phone = newPhone()
+    expect((await start(phone)).body.error.code).toBe('PHONE_NOT_SHARED')
+    const chatId = await sharePhone(phone)
+    const username = `phone${phoneCounter}`
+    await redis.hset(rk('tg', 'usernames'), chatId, username)
+
+    const started = await start(phone)
+    expect(started.body).toMatchObject({ delivery: { type: 'push', codeLength: 6 } })
+    expect(started.body.flowToken).toHaveLength(32)
+    expect((await botOutbox()).at(-1)).toMatchObject({ chatId, text: expect.stringContaining('по номеру телефона') })
+    const signedUp = await verify(phone, started)
+    expect(signedUp.body.accessToken).toBeString()
+    expect(signedUp.cookies.refresh_token).toMatch(/^[0-9a-f]{64}$/)
+
+    const token = signedUp.body.accessToken
+    expect((await api('GET', '/v1/auth/methods', { token })).body).toEqual({ phone, email: `@${username}`, telegram: username, hasPassword: false })
+    // no password yet: the password form does not let in, setting one does
+    expect((await api('POST', '/v1/auth/sign-in', { body: { email: phone, password: 'anything-1' } })).status).toBe(401)
+    expect((await api('POST', '/v1/auth/set-password', { token, body: { password: 'first-pass-1' } })).body).toEqual({ success: true })
+    expect((await api('POST', '/v1/auth/set-password', { token, body: { password: 'second-pass-1' } })).body.error.code).toBe('PASSWORD_ALREADY_SET')
+
+    // the next time the password is asked after the code
+    const again = await verify(phone, await start(phone))
+    // read before toMatchObject: its asymmetric matchers get written into the received object
+    const flowToken = again.body.flowToken
+    expect(again.body).toMatchObject({ step: 'password', flowToken: expect.any(String) })
+    const password = (value: string) => api('POST', '/v1/auth/phone/password', { body: { phone, flowToken, password: value } })
+    expect((await password('wrong-pass-1')).body.error.code).toBe('INVALID_CREDENTIALS')
+    expect((await password('first-pass-1')).body.accessToken).toBeString()
+  })
+
+  test('an existing Telegram account gets the number; the password can be reset by phone', async () => {
+    const user = await createUser()
+    const phone = newPhone()
+    const chatId = await sharePhone(phone)
+    await redis.hset(rk('tg', 'usernames'), chatId, user.telegram)
+
+    const verified = await verify(phone, await start(phone))
+    expect(verified.body.step).toBe('password')
+    expect((await api('GET', '/v1/auth/methods', auth(user))).body.phone).toBe(phone)
+
+    const reset = await api('POST', '/v1/auth/phone/reset-password', { body: { phone, flowToken: verified.body.flowToken, newPassword: 'reset-by-phone-1' } })
+    expect(reset.body.accessToken).toBeString()
+    expect((await api('POST', '/v1/auth/sign-in', { body: { email: user.telegram, password: 'reset-by-phone-1' } })).status).toBe(200)
+  })
+
+  test('without a Telegram username there is nothing to name the account after', async () => {
+    const phone = newPhone()
+    await sharePhone(phone)
+    expect((await verify(phone, await start(phone))).body.error.code).toBe('TELEGRAM_USERNAME_REQUIRED')
+  })
+})
+
+describe('legal pages', () => {
+  test('the privacy page is the page about this copy', async () => {
+    const list = (await api('GET', '/legal-documents?scope=social')).body.documents
+    expect(list).toMatchObject([{ slug: 'privacy', title: 'Политика конфиденциальности', url: '/legal/privacy' }])
+    const document = (await api('GET', '/legal-documents/social/privacy')).body.document
+    expect(document).toMatchObject({ version: '1', documentDate: '2026-10-06', current: true })
+    expect(document.blocks.map((b: any) => b.text).filter(Boolean)).toContain('6. Сведения о разработке')
+    expect((await api('GET', '/legal-documents/social/privacy/versions')).body.versions).toMatchObject([{ version: '1', current: true }])
+    expect((await api('GET', '/legal-documents/social/privacy/versions/1')).body.document.slug).toBe('privacy')
+    expect((await api('GET', '/legal-documents/social/terms')).status).toBe(404)
+  })
+})

@@ -6,12 +6,14 @@ import { logger } from './logger'
 /*
  * Contract with the bot (deploy/telegram-bot/bot.py), both sides share REDIS_URL and REDIS_PREFIX:
  *   <prefix>tg:chats   hash  username (lowercase, no @) -> chat id, written by the bot on /start
+ *   <prefix>tg:usernames hash chat id -> username
  *   <prefix>tg:outbox  list  JSON {chatId, text, expiresAt}, pushed here and popped (BLPOP) by the bot
  *   <prefix>tg:phones  hash  phone (+digits) -> chat id, written by the bot when a user shares their own contact
  */
 const CHATS = () => rk('tg', 'chats')
 const OUTBOX = () => rk('tg', 'outbox')
 const PHONES = () => rk('tg', 'phones')
+const USERNAMES = () => rk('tg', 'usernames')
 
 const USERNAME_RE = /^[a-z][a-z0-9_]{3,31}$/
 
@@ -45,6 +47,11 @@ export async function findPhoneChat(phone: string) {
   return redis.hget(PHONES(), phone)
 }
 
+/** Telegram username of a chat (null when the account has none) */
+export async function findChatUsername(chatId: string) {
+  return redis.hget(USERNAMES(), chatId)
+}
+
 export async function requirePhoneChat(phone: string) {
   const chatId = await findPhoneChat(phone)
   if (!chatId) {
@@ -73,13 +80,14 @@ export async function sendTelegram(chatId: string, text: string, ttlSeconds: num
 
 const escapeHtml = (value: string) => value.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`)
 
-export type OtpPurpose = 'signup' | 'login' | 'reset' | 'attach_phone' | 'change_phone' | 'change_telegram' | 'proof'
+export type OtpPurpose = 'signup' | 'login' | 'reset' | 'phone_entry' | 'attach_phone' | 'change_phone' | 'change_telegram' | 'proof'
 
 export function otpMessage(code: string, purpose: OtpPurpose, device?: string | null) {
   const action = {
     signup: 'регистрации в ИТД',
     login: 'входа в ИТД',
     reset: 'восстановления пароля в ИТД',
+    phone_entry: 'входа в ИТД по номеру телефона',
     attach_phone: 'привязки номера к аккаунту ИТД',
     change_phone: 'смены номера в ИТД',
     change_telegram: 'смены Telegram в ИТД',
