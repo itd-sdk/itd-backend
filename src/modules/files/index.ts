@@ -11,7 +11,6 @@ import { storage } from '../../lib/storage'
 import { authPlugin, type Me } from '../../plugins/auth'
 import { FileModel, SuccessModel, Uuid } from '../../schemas'
 import { enforceActionLimit } from '../../services/rate-limit'
-import { ownsEventItem } from '../event/service'
 
 type FileRow = typeof files.$inferSelect
 
@@ -102,8 +101,7 @@ export const filesModule = new Elysia({ tags: ['Files'] })
   .post(
     '/files/avatar',
     async ({ body, me, set }) => {
-      // an event item: a picture instead of the clan emoji
-      if (!(await ownsEventItem(me.id, 'clan_image'))) throw forbidden('Нужен предмет ивента «Своя картинка вместо эмодзи клана»', 'ITEM_UNAVAILABLE')
+      // a НУКСТА feature on the official server; openitd has no subscription, so everyone may
       await enforceActionLimit('upload', me.id)
       const file = await storeUpload(me, body.file, 'avatar')
       await db.update(users).set({ avatarFileId: file.id, updatedAt: new Date() }).where(eq(users.id, me.id))
@@ -140,9 +138,9 @@ export const filesModule = new Elysia({ tags: ['Files'] })
     '/profile-avatar',
     async ({ me }) => {
       const [file] = me.avatarFileId ? await db.select({ url: files.url }).from(files).where(eq(files.id, me.avatarFileId)).limit(1) : []
-      return { data: { active: file ? { url: file.url } : null, available: await ownsEventItem(me.id, 'clan_image') } }
+      return { data: { active: file?.url ?? null, available: true } }
     },
-    { user: true, response: t.Object({ data: t.Object({ active: t.Nullable(t.Object({ url: t.String() })), available: t.Boolean() }) }) }
+    { user: true, response: t.Object({ data: t.Object({ active: t.Nullable(t.String()), available: t.Boolean() }) }) }
   )
 
   .delete(

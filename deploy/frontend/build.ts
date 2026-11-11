@@ -10,7 +10,6 @@
  * --title <text> (or SITE_TITLE): page title, --icon <file.png|svg|ico|webp> (or SITE_ICON): site icon,
  * --version <x.y.z> (or SITE_VERSION): the version next to the logo until the changelog loads (it shows the newest entry),
  * --css <file> (or SITE_CSS, default deploy/frontend/overrides.css): style fixes linked after the client's styles,
- * --mirror-event: download the site's own event app instead of the stub from deploy/frontend/event-app.
  *
  * openitd patches (./patches.ts) are applied on the fly, so --source may point at itd-frontend `main` or `openitd`.
  */
@@ -33,7 +32,6 @@ const { values: args } = parseArgs({
     version: { type: 'string', default: process.env.SITE_VERSION ?? '' },
     css: { type: 'string', default: process.env.SITE_CSS ?? join(import.meta.dir, 'overrides.css') },
     offline: { type: 'boolean', default: false },
-    'mirror-event': { type: 'boolean', default: false },
     'keep-cdn': { type: 'boolean', default: false }
   }
 })
@@ -140,13 +138,6 @@ function stripTrackers(page: string) {
     })
     .replace(/<noscript>([\s\S]*?)<\/noscript>/gi, (tag, body: string) => (TRACKERS.test(body) ? '' : tag))
     .replace(/<link[^>]*rel="(?:preconnect|dns-prefetch)"[^>]*>/gi, '')
-}
-
-/** Sentry off, CDN links to the local mirror */
-function cleanCode(code: string) {
-  let result = code.replace(/dsn:"https?:\/\/[^"]*@sentry\.[^"]*"/g, 'dsn:""')
-  if (!args['keep-cdn']) result = result.replaceAll(CDN, '/cdn')
-  return result
 }
 
 function looksLikeHtml(body: Buffer) {
@@ -342,85 +333,6 @@ if (!args.offline && !args['keep-cdn'] && [...bundle.values()].some((code) => co
   }
   if (!icons.names.includes('like')) warn('UI icons (like/comment/share) could not be mirrored, run the build again')
 }
-// ---------------------------------------------------------------- 4b. event mini-apps
-
-// /event/alice-ai is a frame with a separate app the site serves from /public/events/<id>/ on the same origin.
-// It is not part of itd-frontend: mirror its page and every file it references under that path.
-const ASSET_REF = /["'`(]((?:\.{1,2}\/|\/)?[A-Za-z0-9_@~./-]+\.(?:m?js|css|png|svg|jpe?g|webp|gif|avif|ico|mp3|wav|ogg|mp4|webm|woff2?|ttf|otf|json))["'`)]/g
-const eventApps: { base: string; files: number }[] = []
-const eventBases = new Set<string>()
-for (const code of bundle.values()) for (const m of code.matchAll(/"(\/public\/events\/[a-z0-9_-]+)"/g)) eventBases.add(m[1]!)
-
-async function mirrorEventApp(base: string) {
-  const origin = new URL(ORIGIN).origin
-  const root = `${ORIGIN}${base}/`
-  const page = (await download(root)).toString('utf8')
-  if (!/<script\b/i.test(page)) throw new Error('the page has no scripts')
-  const queue: string[] = []
-  const add = (ref: string, from: string) => {
-    let url: URL
-    try {
-      url = new URL(ref, from)
-    } catch {
-      return
-    }
-    if (url.origin === origin && url.pathname.startsWith(`${base}/`) && !url.pathname.endsWith('/')) queue.push(url.pathname)
-  }
-  for (const m of page.matchAll(/(?:src|href)="([^"]+)"/g)) add(m[1]!, root)
-  const seen = new Set<string>()
-  let files = 0
-  while (queue.length) {
-    const path = queue.shift()!
-    if (seen.has(path)) continue
-    seen.add(path)
-    const code = /\.(m?js|css)$/.test(path)
-    let body: Buffer
-    try {
-      body = (!code && (await previous(path.slice(1)))) || (await download(`${origin}${path}`))
-    } catch (error) {
-      // module-relative and base-relative guesses for the same reference: one of them is a 404
-      if (!(error instanceof NotFoundError)) missing.static.push(path)
-      continue
-    }
-    if (code) {
-      const text = body.toString('utf8')
-      for (const m of text.matchAll(ASSET_REF)) {
-        add(m[1]!, `${origin}${path}`)
-        add(m[1]!, root)
-      }
-      for (const m of text.matchAll(cdnRe)) await mirrorCdn(m[1]!)
-      body = Buffer.from(cleanCode(text))
-    }
-    await mkdir(dirname(join(OUT, path)), { recursive: true })
-    await writeFile(join(OUT, path), body)
-    files++
-  }
-  for (const m of page.matchAll(cdnRe)) await mirrorCdn(m[1]!)
-  await mkdir(join(OUT, base), { recursive: true })
-  await writeFile(join(OUT, base, 'index.html'), stripTrackers(cleanCode(page)))
-  return files
-}
-
-const EVENT_STUB = join(import.meta.dir, 'event-app')
-if (!args['mirror-event'] && (await exists(EVENT_STUB))) {
-  // our stub: free items, see src/modules/event/free.ts
-  for (const base of eventBases) {
-    await cp(EVENT_STUB, join(OUT, base), { recursive: true })
-    eventApps.push({ base, files: (await readdir(EVENT_STUB)).length })
-    console.log(`event app ${base}: stub from deploy/frontend/event-app`)
-  }
-} else if (!args.offline) {
-  for (const base of eventBases) {
-    try {
-      const files = await mirrorEventApp(base)
-      eventApps.push({ base, files })
-      console.log(`event app ${base}: ${files} files`)
-    } catch (error) {
-      warn(`event app ${base} is not available (${(error as Error).message}); the event page will be empty`)
-    }
-  }
-}
-
 if (missing.cdn.length) warn(`${missing.cdn.length} CDN files could not be mirrored: ${missing.cdn.slice(0, 5).join(', ')}${missing.cdn.length > 5 ? ', …' : ''}`)
 
 // ---------------------------------------------------------------- 5. patches
@@ -575,14 +487,6 @@ if (title || iconPath) {
   }
 }
 page = page.replace(/<\/head>/i, `  ${CAPTCHA_STUB}\n  </head>`)
-// served for /public/events/… only when nginx falls back to the site: without this the whole site would load again
-// inside the event frame
-const EVENT_GUARD =
-  '<script>(function(){var m=/^\\/public\\/events\\/[^/]+\\//.exec(location.pathname);if(!m)return;window.stop();' +
-  // the nginx block for /public/events/ is missing: the file itself is still served as is
-  "if(!/\\/index\\.html$/.test(location.pathname)){location.replace(m[0]+'index.html'+location.search);return}" +
-  "document.documentElement.innerHTML='<body style=\"font:15px system-ui,sans-serif;padding:24px;color:#888\">Страница ивента не установлена: пересоберите веб-клиент и скопируйте его на сервер целиком (папка <code>public/events</code>).</body>'})()</script>"
-page = page.replace(/<head>/i, `<head>\n    ${EVENT_GUARD}`)
 // version next to the logo = newest changelog entry; cached so the next load shows it at once. The button's text
 // node is updated in place: React keeps that node and writes the same value on its next render
 const VERSION_SCRIPT = `<script>(function(){var K='openitd:version';try{window.__openitdVersion=localStorage.getItem(K)||''}catch(e){}
@@ -611,7 +515,6 @@ const info = {
   removedScripts: removed,
   missing,
   icons: icons.names,
-  eventApps,
   warnings
 }
 await writeFile(join(OUT, 'build-info.json'), JSON.stringify(info, null, 2))

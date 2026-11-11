@@ -7,7 +7,6 @@ import { ruDate } from '../../lib/time'
 import { authPlugin } from '../../plugins/auth'
 import { Enum, SuccessModel, Uuid } from '../../schemas'
 import { invalidateBannedWords } from '../../services/moderation'
-import { notify } from '../../services/notifications'
 import { requireTargetUser, findUserByIdentifier } from '../../services/users'
 import { revokeAllSessions } from '../auth/service'
 import { presentVerification, VerificationRequestModel } from '../verification'
@@ -343,37 +342,3 @@ export const adminModule = new Elysia({ prefix: '/admin', tags: ['Admin'] })
     }
   )
 
-  .post(
-    '/notifications/reminder',
-    async ({ body }) => {
-      const recipients = body.userIds?.length
-        ? body.userIds
-        : (await db.select({ id: users.id }).from(users).where(sql`${users.deletedAt} is null`)).map((u) => u.id)
-      // broadcast in the background: the request should not wait for every recipient
-      void (async () => {
-        for (const recipientId of recipients) {
-          await notify({
-            recipientId,
-            actorId: null,
-            type: 'alice_task_reminder',
-            title: body.title,
-            link: body.link ?? null,
-            eventId: body.eventId ?? null,
-            expiresAt: body.expiresAt ? new Date(body.expiresAt) : null
-          })
-        }
-      })()
-      return { success: true, recipients: recipients.length }
-    },
-    {
-      admin: true,
-      body: t.Object({
-        title: t.String({ maxLength: 200 }),
-        link: t.Optional(t.String({ maxLength: 2048 })),
-        eventId: t.Optional(t.String({ maxLength: 64 })),
-        expiresAt: t.Optional(t.String({ format: 'date-time' })),
-        userIds: t.Optional(t.Array(Uuid, { maxItems: 1000 }))
-      }),
-      detail: { summary: 'Send an event reminder notification' }
-    }
-  )

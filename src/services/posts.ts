@@ -4,7 +4,6 @@ import { files, pollOptions, polls, pollVotes, postAttachments, postLikes, posts
 import { forbidden, notFound } from '../lib/errors'
 import { iso } from '../lib/time'
 import { issueViewToken } from '../lib/view-token'
-import { eventActive, toolState } from '../modules/event/service'
 import { canSeeContent, loadBriefs, loadRelation, loadRelations, type Relation, type UserRecord } from './users'
 
 export type PostRow = typeof posts.$inferSelect
@@ -126,15 +125,11 @@ export async function presentPosts(rows: PostRow[], viewerId: string | null) {
   const postIds = [...new Set(all.map((p) => p.id))]
   const userIds = all.flatMap((p) => (p.wallRecipientId ? [p.authorId, p.wallRecipientId] : [p.authorId]))
 
-  // the web client enables red pens and correctors from these per-post states
-  const withTools = eventActive()
-  const [{ records, briefs }, attachments, pollMap, state, correctors, redPens] = await Promise.all([
+  const [{ records, briefs }, attachments, pollMap, state] = await Promise.all([
     loadBriefs(userIds),
     loadPostAttachments(postIds),
     loadPolls(postIds, viewerId),
-    loadViewerState(postIds, viewerId),
-    withTools ? toolState(viewerId, 'corrector', postIds) : null,
-    withTools ? toolState(viewerId, 'red_pen', postIds) : null
+    loadViewerState(postIds, viewerId)
   ])
 
   const render = (post: PostRow) => {
@@ -158,9 +153,6 @@ export async function presentPosts(rows: PostRow[], viewerId: string | null) {
       isOwner: viewerId === post.authorId,
       isPinned: owner?.pinnedPostId === post.id,
       dominantEmoji: post.dominantEmoji,
-      notebook: post.notebookStyle ? { style: post.notebookStyle } : null,
-      corrector: correctors?.data[post.id] ?? null,
-      redPen: redPens?.data[post.id] ?? null,
       wallRecipientId: post.wallRecipientId,
       wallRecipient: post.wallRecipientId ? (briefs.get(post.wallRecipientId) ?? null) : null,
       vs: issueViewToken(post.id, viewerId)

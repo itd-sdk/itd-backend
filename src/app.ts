@@ -7,12 +7,11 @@ import { authModule } from './modules/auth'
 import { adminModule } from './modules/admin'
 import { commentsModule } from './modules/comments'
 import { dwellModule } from './modules/dwell'
-import { eventModule } from './modules/event'
-import { freeItemsModule } from './modules/event/free'
 import { filesModule } from './modules/files'
 import { hashtagsModule } from './modules/hashtags'
 import { notificationsModule } from './modules/notifications'
 import { platformModule } from './modules/platform'
+import { portalModule } from './modules/portal'
 import { postsModule } from './modules/posts'
 import { reportsModule } from './modules/reports'
 import { searchModule } from './modules/search'
@@ -36,7 +35,6 @@ const TAGS = [
   { name: 'Platform', description: 'App versions, changelog, announcements' },
   { name: 'Verification', description: 'Account verification requests' },
   { name: 'Dwell', description: 'View and interaction analytics' },
-  { name: 'Event', description: 'Seasonal event (portal, aliceai)' },
   { name: 'Admin', description: 'Moderation tools' }
 ]
 
@@ -54,8 +52,7 @@ export function createApp() {
     .use(platformModule)
     .use(verificationModule)
     .use(dwellModule)
-    .use(eventModule)
-    .use(freeItemsModule)
+    .use(portalModule)
     .use(adminModule)
 
   return new Elysia({ serve: { idleTimeout: 120, maxRequestBodySize: config.storage.maxVideoSize + 1024 * 1024 } })

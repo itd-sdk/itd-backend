@@ -55,7 +55,6 @@ export type NotifyInput = {
   preview?: string | null
   title?: string | null
   link?: string | null
-  eventId?: string | null
   expiresAt?: Date | null
   dedupeKey?: string | null
 }
@@ -73,8 +72,6 @@ export function presentNotification(row: NotificationRow, actor: NotificationAct
     preview: row.preview,
     title: row.title,
     link: row.link,
-    eventId: row.eventId,
-    eventCycle: row.eventCycle,
     expiresAt: iso(row.expiresAt),
     read: !!row.readAt,
     readAt: iso(row.readAt),
@@ -136,7 +133,6 @@ export async function notify(input: NotifyInput) {
         preview: truncate(input.preview ?? null, 200),
         title: input.title ?? null,
         link: input.link ?? null,
-        eventId: input.eventId ?? null,
         expiresAt: input.expiresAt ?? null,
         dedupeKey: input.dedupeKey ?? null
       })

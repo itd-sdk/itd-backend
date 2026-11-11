@@ -56,15 +56,6 @@ export const PinModel = t.Object({
   grantedAt: Nullable(DateTime)
 })
 
-export const NicknameModel = t.Object({
-  id: t.String(),
-  label: t.String(),
-  styleKey: t.String(),
-  eventId: t.String(),
-  expiresAt: DateTime,
-  stateVersion: t.Integer()
-})
-
 export const LastSeenModel = t.Object({
   unit: Enum(['just_now', 'recently', 'minutes', 'hours', 'this_week', 'this_month', 'long_ago']),
   value: t.Optional(Nullable(t.Integer()))
@@ -77,8 +68,7 @@ const userBriefFields = {
   avatar: t.String({ description: 'Emoji, or picture url for users with a picture avatar' }),
   clanAvatar: t.String({ description: 'Emoji avatar (clan)' }),
   verified: t.Boolean(),
-  pin: Nullable(PinModel),
-  activeNickname: Nullable(NicknameModel)
+  pin: Nullable(PinModel)
 }
 
 /** Compact user used as post/comment author and notification actor */
@@ -222,10 +212,6 @@ const postFields = {
   isOwner: t.Boolean(),
   isPinned: t.Boolean(),
   dominantEmoji: Nullable(t.String()),
-  notebook: Nullable(t.Object({ style: t.String() })),
-  // red pen / corrector state of the post (as /red-pens/state and /correctors/state), null without the event
-  corrector: Nullable(t.Any()),
-  redPen: Nullable(t.Any()),
   wallRecipientId: Nullable(Uuid),
   wallRecipient: Nullable(UserBriefModel),
   vs: t.String({ description: 'View session token for /v1/i dwell reports' })
@@ -285,8 +271,7 @@ export const NotificationTypeModel = Enum([
   'follow_accepted',
   'comment_like',
   'comment_mention',
-  'wall_post',
-  'alice_task_reminder'
+  'wall_post'
 ])
 
 export const NotificationModel = t.Object({
@@ -299,8 +284,6 @@ export const NotificationModel = t.Object({
   preview: Nullable(t.String()),
   title: Nullable(t.String()),
   link: Nullable(t.String()),
-  eventId: Nullable(t.String()),
-  eventCycle: Nullable(t.Integer()),
   expiresAt: Nullable(DateTime),
   read: t.Boolean(),
   readAt: Nullable(DateTime),

@@ -1,8 +1,8 @@
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { validate as isUuid } from 'uuid'
 import { db, type Executor } from '../db/client'
-import { type AccessType, blocks, eventNicknames, eventWallets, files, followRequests, follows, pins, userPins, users } from '../db/schema'
+import { type AccessType, blocks, files, followRequests, follows, pins, userPins, users } from '../db/schema'
 import { ApiError, notFound, uriTooLong } from '../lib/errors'
 import { iso, lastSeenFrom } from '../lib/time'
 import type { Me } from '../plugins/auth'
@@ -12,17 +12,15 @@ const avatarFile = alias(files, 'avatar_file')
 const bannerFile = alias(files, 'banner_file')
 
 export type PinView = { slug: string; name: string; description: string; url: string | null; grantedAt: string | null }
-export type NicknameView = { id: string; label: string; styleKey: string; eventId: string; expiresAt: string; stateVersion: number }
 
 export type UserRecord = Me & {
   avatarUrl: string | null
   bannerUrl: string | null
   pin: PinView | null
-  nickname: NicknameView | null
 }
 
 
-/** Loads users with everything needed to render them (pin, picture avatar, banner, nickname) */
+/** Loads users with everything needed to render them (pin, picture avatar, banner) */
 export async function loadUserRecords(ids: string[], executor: Executor = db): Promise<Map<string, UserRecord>> {
   const unique = [...new Set(ids.filter(Boolean))]
   const result = new Map<string, UserRecord>()
@@ -37,20 +35,13 @@ export async function loadUserRecords(ids: string[], executor: Executor = db): P
       pinName: pins.name,
       pinDescription: pins.description,
       pinUrl: pins.url,
-      pinGrantedAt: userPins.grantedAt,
-      nicknameId: eventNicknames.id,
-      nicknameLabel: eventNicknames.label,
-      nicknameStyle: eventNicknames.styleKey,
-      nicknameEvent: eventNicknames.eventId,
-      nicknameExpiresAt: eventNicknames.expiresAt
+      pinGrantedAt: userPins.grantedAt
     })
     .from(users)
     .leftJoin(avatarFile, and(eq(avatarFile.id, users.avatarFileId), isNull(avatarFile.deletedAt)))
     .leftJoin(bannerFile, and(eq(bannerFile.id, users.bannerFileId), isNull(bannerFile.deletedAt)))
     .leftJoin(pins, eq(pins.slug, users.activePinSlug))
     .leftJoin(userPins, and(eq(userPins.userId, users.id), eq(userPins.pinSlug, users.activePinSlug)))
-    .leftJoin(eventWallets, eq(eventWallets.userId, users.id))
-    .leftJoin(eventNicknames, and(eq(eventNicknames.id, eventWallets.activeNicknameId), gt(eventNicknames.expiresAt, sql`now()`)))
     .where(inArray(users.id, unique))
 
   for (const row of rows) {
@@ -60,16 +51,6 @@ export async function loadUserRecords(ids: string[], executor: Executor = db): P
       bannerUrl: row.bannerUrl,
       pin: row.pinSlug
         ? { slug: row.pinSlug, name: row.pinName!, description: row.pinDescription ?? '', url: row.pinUrl, grantedAt: iso(row.pinGrantedAt) }
-        : null,
-      nickname: row.nicknameId
-        ? {
-            id: row.nicknameId,
-            label: row.nicknameLabel!,
-            styleKey: row.nicknameStyle!,
-            eventId: row.nicknameEvent!,
-            expiresAt: row.nicknameExpiresAt!.toISOString(),
-            stateVersion: 0
-          }
         : null
     })
   }
@@ -191,8 +172,7 @@ export function presentBrief(user: UserRecord) {
     avatar: user.avatarUrl ?? user.avatar,
     clanAvatar: user.avatar,
     verified: user.verified,
-    pin: user.pin,
-    activeNickname: user.nickname
+    pin: user.pin
   }
 }
 

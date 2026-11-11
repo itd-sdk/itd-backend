@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
   boolean,
-  doublePrecision,
   index,
   integer,
   jsonb,
@@ -41,7 +40,6 @@ export type NotificationType =
   | 'comment_like'
   | 'comment_mention'
   | 'wall_post'
-  | 'alice_task_reminder'
 
 // ---------------------------------------------------------------- auth
 
@@ -246,8 +244,6 @@ export const posts = pgTable(
     repostsCount: integer('reposts_count').notNull().default(0),
     viewsCount: integer('views_count').notNull().default(0),
     dominantEmoji: text('dominant_emoji'),
-    // event post notebook: grid | ruled
-    notebookStyle: text('notebook_style').$type<'grid' | 'ruled'>(),
     editedAt: ts('edited_at'),
     deletedAt: ts('deleted_at'),
     deletedBy: uuid('deleted_by'),
@@ -455,8 +451,6 @@ export const notifications = pgTable(
     preview: text('preview'),
     title: text('title'),
     link: text('link'),
-    eventId: text('event_id'),
-    eventCycle: integer('event_cycle'),
     expiresAt: ts('expires_at'),
     dedupeKey: text('dedupe_key'),
     readAt: ts('read_at'),
@@ -562,119 +556,3 @@ export const announcements = pgTable('announcements', {
   active: boolean('active').notNull().default(true),
   createdAt: createdAt()
 })
-
-// ---------------------------------------------------------------- seasonal event ("aliceai")
-
-export const eventWallets = pgTable('event_wallets', {
-  userId: uuid('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  balance: integer('balance').notNull().default(0),
-  redPens: integer('red_pens').notNull().default(0),
-  correctors: integer('correctors').notNull().default(0),
-  notebookGrid: integer('notebook_grid').notNull().default(0),
-  notebookRuled: integer('notebook_ruled').notNull().default(0),
-  activeNicknameId: text('active_nickname_id'),
-  updatedAt: ts('updated_at').notNull().defaultNow()
-})
-
-export type EventItemKind = 'sticker' | 'eraser' | 'window' | 'stain' | 'whoopee_cushion' | 'bell' | 'aura_analyzer' | 'clan_image'
-
-export const eventItems = pgTable(
-  'event_items',
-  {
-    id: id(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    // bell, aura_analyzer and clan_image are one-off items: owning one is the state
-    kind: text('kind').$type<EventItemKind>().notNull(),
-    asset: text('asset'),
-    createdAt: createdAt(),
-    usedAt: ts('used_at')
-  },
-  (t) => [index('event_items_user_idx').on(t.userId)]
-)
-
-export const eventNicknames = pgTable(
-  'event_nicknames',
-  {
-    id: text('id').primaryKey(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    label: text('label').notNull(),
-    styleKey: text('style_key').notNull().default('default'),
-    eventId: text('event_id').notNull().default('aliceai'),
-    expiresAt: ts('expires_at').notNull(),
-    createdAt: createdAt()
-  },
-  (t) => [index('event_nicknames_user_idx').on(t.userId)]
-)
-
-export const eventProfiles = pgTable('event_profiles', {
-  userId: uuid('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  rev: integer('rev').notNull().default(0),
-  windowBrokenAt: ts('window_broken_at'),
-  windowAsset: text('window_asset'),
-  curtainsFund: integer('curtains_fund').notNull().default(0),
-  curtainsGoal: integer('curtains_goal').notNull().default(100),
-  curtainsAvailable: boolean('curtains_available').notNull().default(false),
-  curtainsClosed: boolean('curtains_closed').notNull().default(false),
-  aura: integer('aura').notNull().default(0),
-  claimedAt: ts('claimed_at'),
-  updatedAt: ts('updated_at').notNull().defaultNow()
-})
-
-export type EventAnchor = { kind: 'banner' | 'profile_header' | 'post'; id?: string | null }
-
-export const eventPlacements = pgTable(
-  'event_placements',
-  {
-    id: id(),
-    profileId: uuid('profile_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'sticker' | 'stain'>().notNull(),
-    asset: text('asset'),
-    x: doublePrecision('x').notNull(),
-    y: doublePrecision('y').notNull(),
-    z: doublePrecision('z').notNull().default(0),
-    size: doublePrecision('size').notNull().default(1),
-    angle: doublePrecision('angle').notNull().default(0),
-    wear: integer('wear').notNull().default(0),
-    anchor: jsonb('anchor').$type<EventAnchor>().notNull(),
-    createdBy: uuid('created_by')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: createdAt(),
-    expiresAt: ts('expires_at'),
-    erasedAt: ts('erased_at')
-  },
-  (t) => [index('event_placements_profile_idx').on(t.profileId)]
-)
-
-export const postMarks = pgTable(
-  'post_marks',
-  {
-    id: id(),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => posts.id, { onDelete: 'cascade' }),
-    kind: text('kind').$type<'red_pen' | 'corrector'>().notNull(),
-    authorId: uuid('author_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    eventId: text('event_id').notNull().default('aliceai'),
-    revision: text('revision').notNull(),
-    start: integer('start').notNull(),
-    end: integer('end').notNull(),
-    replacement: text('replacement'),
-    reportsCount: integer('reports_count').notNull().default(0),
-    createdAt: createdAt(),
-    canceledAt: ts('canceled_at')
-  },
-  (t) => [index('post_marks_post_idx').on(t.postId, t.kind)]
-)

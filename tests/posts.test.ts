@@ -82,12 +82,10 @@ describe('create', () => {
     expect(video.body.type).toBe('video')
     // videos are open to everyone (no subscription)
     expect((await api('POST', '/posts', { token: alice.token, body: { attachmentIds: [video.body.id] } })).status).toBe(201)
-    // a picture instead of the clan emoji is an event item
-    expect((await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })).body.error.code).toBe('ITEM_UNAVAILABLE')
-    await api('POST', '/v1/aliceai/free/clan_image', { token: bob.token, body: { amount: 1 } })
+    // picture avatars (НУКСТА on the official server) are open to everyone
     const picture = await api('POST', '/files/avatar', { token: bob.token, form: uploadForm(PNG_1x1, 'me.png') })
     expect(picture.status).toBe(201)
-    expect((await api('GET', '/profile-avatar', { token: bob.token })).body.data).toEqual({ active: { url: picture.body.url }, available: true })
+    expect((await api('GET', '/profile-avatar', { token: bob.token })).body.data).toEqual({ active: picture.body.url, available: true })
 
     const text = await api('POST', '/files/upload', { token: alice.token, form: uploadForm(Buffer.from('just some text, not media'), 'a.png', 'image/png') })
     expect(text.body.error.message).toBe('Недопустимый тип файла')
