@@ -93,6 +93,30 @@ describe('files, reports, platform', () => {
     expect((await app.handle(new Request(`http://localhost${path}`))).status).toBe(404)
   })
 
+  test('a banner is drawn from strokes; a picture has its own endpoint', async () => {
+    const user = await createUser()
+    const strokes = { version: 1, width: 1100, height: 380, ops: [{ tool: 'brush', color: '#FF3B30', width: 12, points: [[50, 50], [600, 300]] }] }
+    const drawn = await api('POST', '/files/banner-drawing', { token: user.token, body: strokes })
+    expect(drawn.status).toBe(201)
+    expect(drawn.body).toMatchObject({ mimeType: 'image/png', type: 'image', width: 1100, height: 380 })
+    const served = await app.handle(new Request(`http://localhost${new URL(drawn.body.url).pathname}`))
+    expect(served.headers.get('content-type')).toBe('image/png')
+    expect((await api('PUT', '/users/me', { token: user.token, body: { bannerId: drawn.body.id } })).body.banner).toBe(drawn.body.url)
+
+    // the drawing endpoint takes strokes only
+    for (const body of [{ ...strokes, ops: [{ tool: 'image', url: 'https://example.com/a.png' }] }, { ...strokes, width: 4000 }, { image: 'data:image/png;base64,AAAA' }]) {
+      expect((await api('POST', '/files/banner-drawing', { token: user.token, body })).status).toBeOneOf([400, 422])
+    }
+    expect((await api('POST', '/files/banner-drawing', { body: strokes })).status).toBe(401)
+
+    const picture = await api('POST', '/files/banner-image', { token: user.token, form: uploadForm(PNG_1x1, 'banner.png') })
+    expect(picture.status).toBe(201)
+    expect(picture.body).toMatchObject({ mimeType: 'image/png', type: 'image', width: 1, height: 1 })
+    expect((await api('PUT', '/users/me', { token: user.token, body: { bannerId: picture.body.id } })).body.banner).toBe(picture.body.url)
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(32)])
+    expect((await api('POST', '/files/banner-image', { token: user.token, form: uploadForm(mp4, 'clip.mp4') })).status).toBe(400)
+  })
+
   test('reports', async () => {
     const author = await createUser()
     const reporter = await createUser()

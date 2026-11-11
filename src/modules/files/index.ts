@@ -4,9 +4,10 @@ import { v7 as uuidv7 } from 'uuid'
 import { config } from '../../config'
 import { db } from '../../db/client'
 import { commentAttachments, comments, files, postAttachments, posts, users } from '../../db/schema'
+import { bannerDrawingPng, DrawingError } from '../../lib/drawing'
 import { ApiError, badRequest, conflict, forbidden, notFound, payloadTooLarge } from '../../lib/errors'
 import { errorMeta, logger } from '../../lib/logger'
-import { sniff } from '../../lib/media'
+import { sniff, type SniffResult } from '../../lib/media'
 import { storage } from '../../lib/storage'
 import { authPlugin, type Me } from '../../plugins/auth'
 import { FileModel, SuccessModel, Uuid } from '../../schemas'
@@ -33,15 +34,18 @@ export function presentFile(file: FileRow) {
 const invalidType = () => new ApiError(400, 'VALIDATION_ERROR', 'Недопустимый тип файла')
 
 /** Stores an uploaded file after checking its real type (magic bytes) and size */
-async function storeUpload(me: Me, upload: File, purpose: 'media' | 'avatar') {
+async function storeUpload(me: Me, upload: File, purpose: 'media' | 'avatar', only?: 'image') {
   if (upload.size === 0) throw badRequest('File is empty', 'VALIDATION_ERROR')
   if (upload.size > Math.max(...Object.values(MAX_BY_KIND))) throw payloadTooLarge()
   const bytes = new Uint8Array(await upload.arrayBuffer())
   const detected = sniff(bytes, upload.type)
   if (!detected) throw invalidType()
-  if (purpose === 'avatar' && detected.kind !== 'image') throw invalidType()
+  if ((purpose === 'avatar' || only === 'image') && detected.kind !== 'image') throw invalidType()
   if (bytes.length > MAX_BY_KIND[detected.kind]) throw payloadTooLarge()
+  return storeBytes(me, bytes, detected, upload.name, purpose)
+}
 
+async function storeBytes(me: Me, bytes: Uint8Array, detected: SniffResult, name: string, purpose: 'media' | 'avatar') {
   const id = uuidv7()
   const now = new Date()
   const key = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${id}.${detected.ext}`
@@ -53,7 +57,7 @@ async function storeUpload(me: Me, upload: File, purpose: 'media' | 'avatar') {
     throw new ApiError(500, 'UPLOAD_ERROR', 'Не удалось загрузить файл')
   }
 
-  const filename = (upload.name || `file.${detected.ext}`).replace(/[/\\\u0000-\u001f]/g, '_').slice(0, 255)
+  const filename = (name || `file.${detected.ext}`).replace(/[/\\\u0000-\u001f]/g, '_').slice(0, 255)
   const [row] = await db
     .insert(files)
     .values({
@@ -113,6 +117,52 @@ export const filesModule = new Elysia({ tags: ['Files'] })
       body: UploadBody,
       response: { 201: t.Object({ ...FileModel.properties, avatar: t.String() }) },
       detail: { summary: 'Upload a picture avatar' }
+    }
+  )
+
+  .post(
+    '/files/banner-drawing',
+    async ({ body, me, set }) => {
+      await enforceActionLimit('upload', me.id)
+      let png: ReturnType<typeof bannerDrawingPng>
+      try {
+        png = bannerDrawingPng(body)
+      } catch (error) {
+        if (error instanceof DrawingError) throw badRequest(error.message, 'VALIDATION_ERROR')
+        throw error
+      }
+      const detected: SniffResult = { kind: 'image', mime: 'image/png', ext: 'png', width: png.width, height: png.height }
+      set.status = 201
+      return presentFile(await storeBytes(me, png.bytes, detected, 'banner.png', 'media'))
+    },
+    {
+      user: true,
+      body: t.Object({
+        version: t.Integer(),
+        width: t.Number(),
+        height: t.Number(),
+        // checked by parseBannerDrawing
+        ops: t.Array(t.Unknown(), {
+          description: '`{tool, color, width, points: [[x, y], ...]}` with tool brush, eraser, line, rectangle or circle; `{tool: "clear"}`'
+        })
+      }),
+      response: { 201: FileModel },
+      detail: { summary: 'A banner drawn in the web client: the strokes are painted on the server into a PNG (set it with bannerId)' }
+    }
+  )
+
+  .post(
+    '/files/banner-image',
+    async ({ body, me, set }) => {
+      await enforceActionLimit('upload', me.id)
+      set.status = 201
+      return presentFile(await storeUpload(me, body.file, 'media', 'image'))
+    },
+    {
+      user: true,
+      body: t.Object({ file: t.File({ description: 'Image (jpeg, png, gif, webp, avif, heic)' }) }),
+      response: { 201: FileModel },
+      detail: { summary: 'A banner from a picture (openitd; the official client only sends drawings). Set it with bannerId' }
     }
   )
 
