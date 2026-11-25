@@ -6,18 +6,18 @@ span[data-icon="liked"] + span {
   color: var(--accent-like);
 }
 
-/* notifications (the list .qKA7 and the pop-up .QN2b): icons in the round type badge are solid black (liked.svg brings
+/* notifications (the list .SfaS and the pop-up .ZY4n): icons in the round type badge are solid black (liked.svg brings
    its own red fill, the badge is red too; comment.svg is an outline only) */
-.qKA7 [data-icon] svg,
-.qKA7 [data-icon] svg *,
-.QN2b [data-icon] svg,
-.QN2b [data-icon] svg * {
+.SfaS [data-icon] svg,
+.SfaS [data-icon] svg *,
+.ZY4n [data-icon] svg,
+.ZY4n [data-icon] svg * {
   fill: #000 !important;
   stroke: #000 !important;
 }
 
 /* posts and profiles: the page column (layout wrapper) was 650px; the shop page keeps its own width */
-.ZPS4:not(.htCo) {
+.Y37r:not(.HJkp) {
   width: min(720px, 100%) !important;
   max-width: 720px !important;
 }

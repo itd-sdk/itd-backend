@@ -62,13 +62,13 @@ export function decompiledPatches(botUsername = 'openitd_bot'): Patch[] {
       name: 'shop: desktop menu item',
       find: /\n\s*[\w$]+\([\w$]+, \{\s*href: "\/shop",\s*icon: [\w$]+\([\w$]+, \{\}\),\s*badge: [\w$]+,\s*children: "Магаз",\s*\}\),/g,
       replace: () => '',
-      done: /children: "Поиск",?\s*\}\),\s*(\(\([\w$]+\.active|[\w$]+\([\w$]+, \{\s*path: "\/event")/
+      done: /children: "Поиск",?\s*\}\),\s*(\(\([\w$]+\.active|[\w$]+\([\w$]+, \{\s*path: "\/event"|[\w$]+\("a", \{\s*href: [\w$]+ \? [\w$]+\.route)/
     },
     {
       name: 'shop: mobile menu item',
       find: /\n\s*\{ id: "shop", label: "Магаз", icon: [\w$]+, href: "\/shop" \},/g,
       replace: () => '',
-      done: /\{ id: "feed", label: "Лента", icon: [\w$]+, href: "\/" \},\s*(\.\.\.|\{ id: "event")/
+      done: /\{ id: "feed", label: "Лента", icon: [\w$]+, href: "\/" \},\s*(\{ id: "messages", label: "Чаты", icon: [\w$]+, href: "\/chats" \},\s*)?(\.\.\.|\{\s*id: "event")/
     },
     {
       name: 'shop: route',

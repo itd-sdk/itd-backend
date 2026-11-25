@@ -82,6 +82,10 @@ describe('sign-in with LOGIN_CODE', () => {
       expect(message.text).toContain('код для входа')
       expect(message.text).toContain('Android 14')
 
+      // «Отправить код снова» of the November web client: /email/resend-otp with the login in `email` (too early here)
+      const resent = await api('POST', '/v1/auth/email/resend-otp', { body: { email: user.telegram, flowToken: signIn.body.flowToken } })
+      expect(resent.status).toBe(429)
+
       const ok = await api('POST', '/v1/auth/verify-otp', { body: { telegram: user.telegram, otp: signIn.body.otp, flowToken: signIn.body.flowToken } })
       expect(ok.status).toBe(200)
       expect((await api('GET', '/users/me', { token: ok.body.accessToken })).body.id).toBe(user.id)

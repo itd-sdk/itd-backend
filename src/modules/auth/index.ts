@@ -98,6 +98,14 @@ const flowResponse = (flowToken: string, nextStep: string, otp: string) => ({
   ...(config.auth.exposeOtp ? { otp } : {})
 })
 
+const ResendBody = t.Object({ flowToken: t.String({ maxLength: 128 }), ...Login })
+
+async function resendCode(body: typeof ResendBody.static) {
+  const flow = await loadFlow(body.flowToken, echoedLogin(body))
+  const otp = await resendOtp(body.flowToken, flow)
+  return { success: true, expiresIn: config.auth.otpTtl, ...contactDelivery(flow), ...(config.auth.exposeOtp ? { otp } : {}) }
+}
+
 export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
   .use(contextPlugin)
   .use(authPlugin)
@@ -210,18 +218,15 @@ export const authModule = new Elysia({ prefix: '/v1/auth', tags: ['Auth'] })
     }
   )
 
-  .post(
-    '/resend-otp',
-    async ({ body }) => {
-      const flow = await loadFlow(body.flowToken, echoedLogin(body))
-      const otp = await resendOtp(body.flowToken, flow)
-      return { success: true, expiresIn: config.auth.otpTtl, ...contactDelivery(flow), ...(config.auth.exposeOtp ? { otp } : {}) }
-    },
-    {
-      body: t.Object({ flowToken: t.String({ maxLength: 128 }), ...Login }),
-      detail: { summary: 'Send the code again' }
-    }
-  )
+  .post('/resend-otp', ({ body }) => resendCode(body), {
+    body: ResendBody,
+    detail: { summary: 'Send the code again' }
+  })
+  // the same, where the November web client sends it
+  .post('/email/resend-otp', ({ body }) => resendCode(body), {
+    body: ResendBody,
+    detail: { summary: 'Send the code again (web client path)' }
+  })
 
   .post(
     '/forgot-password',

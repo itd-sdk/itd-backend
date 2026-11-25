@@ -45,6 +45,19 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     done: new RegExp(escape(to))
   })
   const say = (from: string, to: string) => swap(JSON.stringify(from), JSON.stringify(to), `text: ${from}`)
+  // a template literal whose ${} parts are any expression: minified names change between builds
+  const template = (from: string, to: string, name: string): Patch => {
+    const pattern = (text: string) => new RegExp(text.split('${}').map(escape).join('\\$\\{([\\w$.]+)\\}'), 'g')
+    return {
+      name,
+      find: pattern(`\`${from}\``),
+      replace: (...m: string[]) => {
+        let n = 1
+        return `\`${to.replaceAll('${}', () => '${' + m[n++] + '}')}\``
+      },
+      done: new RegExp(pattern(`\`${to}\``).source)
+    }
+  }
   const botLink = `@${bot}`
   const telegramSignUp = (h: string) => {
     const field = (label: string, input: string) => `${h}("label",{className:__pa.field,children:[${JSON.stringify(label)},${h}("input",${input})]})`
@@ -142,13 +155,13 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       name: 'shop: desktop menu item',
       find: /[\w$]+\([\w$]+,\{href:"\/shop",icon:[\w$]+\([\w$]+,\{\}\),badge:[\w$]+,children:"Магаз"\}\),/g,
       replace: () => '',
-      done: /children:"Поиск"\}\),(\([\w$]+\.active|[\w$]+\([\w$]+,\{path:"\/event")/
+      done: /children:"Поиск"\}\),(\([\w$]+\.active|[\w$]+\([\w$]+,\{path:"\/event"|[\w$]+\("a",\{href:[\w$]+\?[\w$]+\.route)/
     },
     {
       name: 'shop: mobile menu item',
       find: /\{id:"shop",label:"Магаз",icon:[\w$]+,href:"\/shop"\},/g,
       replace: () => '',
-      done: /\{id:"feed",label:"Лента",icon:[\w$]+,href:"\/"\},(\.\.\.|\{id:"event")/
+      done: /\{id:"feed",label:"Лента",icon:[\w$]+,href:"\/"\},(\{id:"messages",label:"Чаты",icon:[\w$]+,href:"\/chats"\},)?(\.\.\.|\{id:"event")/
     },
     {
       name: 'shop: route',
@@ -161,7 +174,7 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       name: 'nuksta: sidebar button',
       find: /![\w$]+\?\.subscription\?\.isActive&&[\w$]+\("button",\{className:[\w$.]+,onClick:\(\)=>[\w$]+\(!0\),children:\[[\w$]+\("span",\{children:"⭐"\}\),[\w$]+\("span",\{children:"ИТД НУКСТА"\}\)\]\}\),/g,
       replace: () => '',
-      done: /children:\[[\w$]+\("button",\{className:[\w$.]+,onClick:[\w$]+,children:\[[\w$]+\([\w$]+,\{size:20\}\),[\w$]+\("span",\{children:"Выйти"\}\)/
+      done: /children:\[[\w$]+\("button",\{className:[\w$.]+,onClick:[\w$]+,(disabled:[\w$]+,"aria-busy":[\w$]+,)?children:\[[\w$]+\([\w$]+,\{size:20\}\),[\w$]+\("span",\{children:([\w$]+\?"Выходим\.\.\.":)?"Выйти"\}\)/
     },
     {
       name: 'nuksta: profile button',
@@ -245,7 +258,7 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     say('Получить звонок', 'Получить код'),
     say('Позвонить снова', 'Отправить код снова'),
     say('Звонок бесплатный. Номер не появится в профиле.', 'Номер не появится в профиле.'),
-    swap('`Повторный звонок через ${w} с`', '`Повторная отправка через ${w} с`', 'text: phone resend timer'),
+    template('Повторный звонок через ${} с', 'Повторная отправка через ${} с', 'text: phone resend timer'),
     say('Отправили уведомление', 'Отправили код в Telegram'),
     say('Посмотрите код в уведомлении на устройстве, где вы уже вошли в ИТД.', `Код пришёл в Telegram, которым вы поделились номером с ботом ${botLink}.`),
     say('Позвоним на него, чтобы убедиться, что номер ваш.', `Сначала поделитесь этим номером с ботом ${botLink}: код придёт в тот Telegram.`),
@@ -259,7 +272,7 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     say('Новая почта', 'Новый Telegram'),
     say('Смена почты', 'Смена Telegram'),
     say('Почта изменена', 'Telegram изменён'),
-    swap('`Теперь входите по почте ${f}`', '`Теперь входите по нику ${f}`', 'text: signed in by the new Telegram'),
+    template('Теперь входите по почте ${}', 'Теперь входите по нику ${}', 'text: signed in by the new Telegram'),
     say('Почта останется прежней', 'Telegram останется прежним'),
     say('Почта уже изменилась. Откройте настройки заново.', 'Telegram уже изменился. Откройте настройки заново.'),
     say('Пришлём на неё код, чтобы убедиться, что почта ваша.', `Откройте бота ${botLink} с нового Telegram и нажмите «Старт»: пришлём туда код.`),
@@ -275,10 +288,10 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
     say('Создайте пароль, чтобы входить по почте и по номеру без кода.', 'Создайте пароль, чтобы входить по нику Telegram и по номеру.'),
     say('С паролем можно входить по почте и по номеру без кода.', 'С паролем можно входить по нику Telegram и по номеру.'),
     say('Теперь можно входить с паролем по почте и по номеру.', 'Теперь можно входить с паролем по нику Telegram и по номеру.'),
-    swap('`Код на почту ${o.email}`', '`Код в Telegram ${o.email}`', 'text: proof by the Telegram'),
-    swap('`Код на старую почту ${o.email}`', '`Код в текущий Telegram ${o.email}`', 'text: proof by the current Telegram'),
-    swap('`Код на старый номер ${o.phone}`', '`Код в Telegram текущего номера ${o.phone}`', 'text: proof by the current phone'),
-    swap('`Код на номер ${o.phone}`', '`Код в Telegram номера ${o.phone}`', 'text: proof by the phone'),
+    template('Код на почту ${}', 'Код в Telegram ${}', 'text: proof by the Telegram'),
+    template('Код на старую почту ${}', 'Код в текущий Telegram ${}', 'text: proof by the current Telegram'),
+    template('Код на старый номер ${}', 'Код в Telegram текущего номера ${}', 'text: proof by the current phone'),
+    template('Код на номер ${}', 'Код в Telegram номера ${}', 'text: proof by the phone'),
     {
       // the new value of the "email" is a Telegram username
       name: 'settings: Telegram field instead of email',
@@ -312,14 +325,22 @@ export function openitdPatches(botUsername = DEFAULT_BOT): Patch[] {
       done: /SAME_PHONE:"[^"]*",PHONE_NOT_SHARED:/
     },
     {
+      // the Telegram sign-up form (below) looks like the phone one: the phone form chunk also exports its styles,
+      // button and logo under fixed names (the bundle's own export names change with every build)
+      name: 'phone form: shared pieces for the Telegram sign-up',
+      find: /(className:([\w$]+)\.card,[\s\S]*?className:\2\.brand,children:[\w$]+\(([\w$]+),\{\}\)[\s\S]*?\(([\w$]+),\{type:"submit",fullWidth:!0,size:"lg"[\s\S]*)export\{([\w$]+) as P\}/g,
+      replace: (_, code, styles, logo, button, phoneFlow) =>
+        `${code}export{${phoneFlow} as P,${styles} as __pa,${button} as __Btn,${logo} as __Logo}`,
+      done: /[\w$]+ as __pa,[\w$]+ as __Btn,[\w$]+ as __Logo\}/
+    },
+    {
       // the phone is optional: /register signs up with a Telegram nick and a password (the code comes from the bot),
       // the client's phone sign-up stays at /register?phone. Plain DOM handlers: the chunk has no React hooks
       name: 'sign-up: Telegram nick, phone optional',
-      find: /import\{u as ([\w$]+)\}from"(\.\/index-[\w-]+\.js)";import\{P as ([\w$]+)\}from"(\.\/index-[\w-]+\.js)";([\s\S]*?)import"(\.\/PhoneAccess\.module-[\w-]+\.js)";([\s\S]*?)const ([\w$]+)=[\w$]+=>\1\(\3,\{intent:"sign-up"\}\);/g,
-      replace: (_, h, main, phoneFlow, phoneFile, between, styles, rest, register) =>
-        `import{u as ${h},B as __Btn,af as __Logo}from"${main}";import{P as ${phoneFlow}}from"${phoneFile}";${between}` +
-        `import{s as __pa}from"${styles}";${rest}${telegramSignUp(h)}` +
-        `const ${register}=e=>new URLSearchParams(location.search).has("phone")?${h}(${phoneFlow},{intent:"sign-up"}):${h}(__TgSignUp,{});`,
+      find: /import\{u as ([\w$]+)\}from"(\.\/[\w-]+\.js)";import\{P as ([\w$]+)\}from"(\.\/[\w-]+\.js)";([\s\S]*?)function ([\w$]+)\(([\w$]+)\)\{return \1\(\3,\{intent:"sign-up"\}\)\}/g,
+      replace: (_, h, main, phoneFlow, phoneFile, between, register, props) =>
+        `import{u as ${h}}from"${main}";import{P as ${phoneFlow},__pa,__Btn,__Logo}from"${phoneFile}";${between}${telegramSignUp(h)}` +
+        `function ${register}(${props}){return new URLSearchParams(location.search).has("phone")?${h}(${phoneFlow},{intent:"sign-up"}):${h}(__TgSignUp,{})}`,
       done: /function __TgSignUp\(\)/
     },
     {

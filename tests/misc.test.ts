@@ -246,6 +246,17 @@ describe('pins', () => {
   })
 })
 
+describe('status checks of the web client', () => {
+  test('no seasonal event, no subscription, no terms to accept', async () => {
+    const user = await createUser()
+    expect((await api('GET', '/v1/event/status')).body).toEqual({ enabled: false })
+    expect((await api('GET', '/v1/subscription/', { token: user.token })).body).toEqual({ active: false })
+    expect((await api('GET', '/v1/auth/terms-acceptance', { token: user.token })).body).toEqual({ version: '1', required: false })
+    const accepted = await api('POST', '/v1/auth/terms-acceptance', { token: user.token, body: { accepted: true, contextToken: 'x' } })
+    expect(accepted.body.success).toBe(true)
+  })
+})
+
 describe('portal', () => {
   test('the event tab: inactive by default, an old event-app url means no portal', async () => {
     expect((await api('GET', '/v1/portal')).body).toEqual({ active: false, title: 'Портал', url: '' })
@@ -254,7 +265,6 @@ describe('portal', () => {
     try {
       expect((await api('GET', '/v1/portal')).body).toMatchObject({ active: true, url: 'https://example.com/event' })
       // the removed event pages are gone
-      expect((await api('GET', '/v1/event/status')).status).toBe(404)
       expect((await api('GET', '/red-pens/inventory')).status).toBe(404)
     } finally {
       Object.assign(config.portal, saved)

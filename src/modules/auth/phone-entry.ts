@@ -39,6 +39,7 @@ import {
 
 const CONSENT_TTL_SECONDS = 10 * 60
 const PROTOCOL_VERSION = 2
+const TERMS_VERSION = '1'
 const DELIVERY = { type: 'push', channel: 'push', codeLength: 6 } as const
 const consentKey = (token: string) => rk('consent', token)
 type Cookies = Record<string, Cookie<unknown>>
@@ -125,6 +126,15 @@ export const phoneEntryModule = new Elysia({ tags: ['Auth'] })
   })
   .get('/captcha/widget', () => new Response(CAPTCHA_WIDGET, { headers: { 'content-type': 'text/html; charset=utf-8' } }), {
     detail: { hide: true }
+  })
+
+  // the web client checks after sign-in whether new terms must be accepted; openitd has no terms to accept
+  .get('/terms-acceptance', () => ({ version: TERMS_VERSION, required: false }), {
+    detail: { summary: 'Whether the signed-in user must accept new terms (openitd: never)' }
+  })
+  .post('/terms-acceptance', () => ({ success: true, version: TERMS_VERSION }), {
+    body: t.Object({ accepted: t.Optional(t.Boolean()), contextToken: t.Optional(t.String({ maxLength: 128 })) }),
+    detail: { summary: 'Accept the current terms (openitd: nothing to accept)' }
   })
 
   .get(
