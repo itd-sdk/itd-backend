@@ -10,6 +10,7 @@ import { dwellModule } from './modules/dwell'
 import { filesModule } from './modules/files'
 import { hashtagsModule } from './modules/hashtags'
 import { legalModule } from './modules/legal'
+import { messengerModule } from './modules/messenger'
 import { notificationsModule } from './modules/notifications'
 import { platformModule } from './modules/platform'
 import { portalModule } from './modules/portal'
@@ -36,6 +37,7 @@ const TAGS = [
   { name: 'Platform', description: 'App versions, changelog, announcements' },
   { name: 'Verification', description: 'Account verification requests' },
   { name: 'Dwell', description: 'View and interaction analytics' },
+  { name: 'Messenger', description: 'Chats of the web client: messages, reactions, files, WebSocket' },
   { name: 'Admin', description: 'Moderation tools' }
 ]
 
@@ -55,6 +57,7 @@ export function createApp() {
     .use(dwellModule)
     .use(portalModule)
     .use(legalModule)
+    .use(messengerModule)
     .use(adminModule)
 
   return new Elysia({ serve: { idleTimeout: 120, maxRequestBodySize: config.storage.maxVideoSize + 1024 * 1024 } })

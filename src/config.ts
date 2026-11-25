@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 const env = process.env
 
 const str = (name: string, fallback: string) => env[name]?.trim() || fallback
@@ -102,6 +105,17 @@ export const config = {
 
 
   // the «Ивент» tab: a link opened in a new tab while active
+  messenger: {
+    maxFileSize: int('MESSENGER_MAX_FILE_MB', 200) * 1024 * 1024,
+    maxAttachments: int('MESSENGER_MAX_ATTACHMENTS', 10),
+    textMaxLength: int('MESSENGER_TEXT_MAX_LENGTH', 4096),
+    editWindowHours: int('MESSENGER_EDIT_WINDOW_HOURS', 48),
+    // parts of an upload in progress wait here until it is finalized (not under UPLOAD_DIR: that one is public)
+    uploadTmpDir: str('MESSENGER_UPLOAD_TMP_DIR', '') || join(tmpdir(), 'itd-chat-parts'),
+    // older events are dropped; a client that was away longer reloads its chats
+    eventRetentionDays: int('MESSENGER_EVENT_RETENTION_DAYS', 7)
+  },
+
   portal: {
     active: bool('PORTAL_ACTIVE', false),
     title: str('PORTAL_TITLE', 'Портал'),

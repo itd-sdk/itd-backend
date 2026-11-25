@@ -63,7 +63,7 @@ export async function consumeEndpointLimit(ip: string, limit: number): Promise<E
   return { allowed: allowed === 1, limit: capacity, remaining, retryAfterMs }
 }
 
-export type ActionName = 'like' | 'comment' | 'follow' | 'repost' | 'post' | 'search' | 'report' | 'upload' | 'sign_in' | 'otp' | 'vote'
+export type ActionName = 'like' | 'comment' | 'follow' | 'repost' | 'post' | 'search' | 'report' | 'upload' | 'sign_in' | 'otp' | 'vote' | 'message' | 'chat'
 
 const ACTIONS: Record<ActionName, { perMinute: number; perHour: number; message: string }> = {
   like: { perMinute: 30, perHour: 200, message: 'Слишком много лайков. Повторите позже.' },
@@ -76,7 +76,9 @@ const ACTIONS: Record<ActionName, { perMinute: number; perHour: number; message:
   upload: { perMinute: 20, perHour: 200, message: 'Слишком много загрузок. Повторите позже.' },
   vote: { perMinute: 20, perHour: 200, message: 'Слишком много голосов. Повторите позже.' },
   sign_in: { perMinute: 10, perHour: 60, message: 'Слишком много попыток входа. Повторите позже.' },
-  otp: { perMinute: 3, perHour: 20, message: 'Слишком много запросов кода. Повторите позже.' }
+  otp: { perMinute: 3, perHour: 20, message: 'Слишком много запросов кода. Повторите позже.' },
+  message: { perMinute: 60, perHour: 1500, message: 'Слишком много сообщений. Повторите позже.' },
+  chat: { perMinute: 10, perHour: 100, message: 'Слишком много новых чатов. Повторите позже.' }
 }
 
 /** Per-account (or per-ip for auth) action limits, minute + hour sliding windows */

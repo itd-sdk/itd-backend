@@ -216,6 +216,10 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d ВАШ.ДОМЕН             # сертификат, HTTPS и редирект с http
 ```
 
+Чаты работают через WebSocket (`/api/v1/messenger/ws`): в `itd.conf` для него отдельный `location` с
+заголовками `Upgrade`/`Connection` — если nginx уже был настроен по старому конфигу, добавьте этот блок.
+Caddy проксирует WebSocket сам.
+
 Конфиги nginx: `/etc/nginx/nginx.conf` (общий), сайты — `/etc/nginx/sites-available/` (включаются ссылкой
 в `sites-enabled/`) или `/etc/nginx/conf.d/*.conf`, логи — `/var/log/nginx/`. Сайт nginx читает от
 пользователя `www-data`, поэтому собранный веб-клиент кладите в `/var/www/itd`, а не в домашнюю папку.

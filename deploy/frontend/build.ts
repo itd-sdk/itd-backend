@@ -217,7 +217,18 @@ if (!args.offline) {
     const code = await readFile(path, 'utf8')
     for (const m of code.matchAll(/"assets\/([A-Za-z0-9_.-]+\.(?:js|css))"/g)) queue.push(m[1]!)
     for (const m of code.matchAll(/["'`]\.\/([A-Za-z0-9_.-]+\.(?:js|css))["'`]/g)) queue.push(m[1]!)
+    for (const m of code.matchAll(/["'`]\/assets\/([A-Za-z0-9_.-]+\.(?:js|css))["'`]/g)) queue.push(m[1]!)
   }
+}
+
+// service workers (the chats' /messenger-sw.js) are registered from the site root under their own name: they live
+// next to index.html, not in /assets (which gets hashed names and immutable caching)
+const serviceWorkers = [...(await readFile(join(ASSETS, entry), 'utf8')).matchAll(/serviceWorker\s*\.register\(\s*"\/([\w.-]+\.js)"/g)].map((m) => m[1]!)
+for (const name of serviceWorkers) {
+  const copied = join(ASSETS, name)
+  if (await exists(copied)) await rename(copied, join(OUT, name))
+  else if (!args.offline) await writeFile(join(OUT, name), await download(`${ORIGIN}/${name}`)).catch(() => warn(`service worker /${name} could not be downloaded`))
+  else warn(`service worker /${name} is not in itd-frontend/raw (offline build)`)
 }
 
 // Vite rejects a lazy import when one of its CSS deps fails to load, so a missing stylesheet would break
@@ -226,7 +237,11 @@ const missingCss: string[] = []
 const missingJs: string[] = []
 for (const file of (await readdir(ASSETS)).filter((f) => f.endsWith('.js'))) {
   const code = await readFile(join(ASSETS, file), 'utf8')
-  const refs = [...code.matchAll(/"assets\/([A-Za-z0-9_.-]+\.(?:js|css))"/g), ...code.matchAll(/["'`]\.\/([A-Za-z0-9_.-]+\.(?:js|css))["'`]/g)]
+  const refs = [
+    ...code.matchAll(/"assets\/([A-Za-z0-9_.-]+\.(?:js|css))"/g),
+    ...code.matchAll(/["'`]\.\/([A-Za-z0-9_.-]+\.(?:js|css))["'`]/g),
+    ...code.matchAll(/["'`]\/assets\/([A-Za-z0-9_.-]+\.(?:js|css))["'`]/g)
+  ]
   for (const [, name] of refs) {
     if (await exists(join(ASSETS, name!))) continue
     if (name!.endsWith('.css')) {
@@ -250,6 +265,10 @@ const staticRefs = new Set<string>()
 // "./assets/x.png" are import.meta.glob keys (source paths), not URLs: the hashed URL sits in a variable next to them
 const staticRe = new RegExp(`(?<![.\\w/])/?assets/((?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.(?:${BINARY_EXT}))`, 'g')
 for (const code of bundle.values()) for (const m of code.matchAll(staticRe)) staticRefs.add(m[1]!)
+for (const code of bundle.values()) {
+  if (!code.includes('assets/messenger/artwork/reaction-${')) continue
+  for (const m of code.matchAll(/\{emoji:"[^"]*",title:"[^"]*",image:(\d+)\}/g)) staticRefs.add(`messenger/artwork/reaction-${m[1]}.webp`)
+}
 const rootRefs = new Set<string>()
 for (const m of (html ?? '').matchAll(/(?:href|src|content)="\/(?!assets\/|\/)([^"?#]+\.[a-z0-9]+)"/gi)) rootRefs.add(m[1]!)
 

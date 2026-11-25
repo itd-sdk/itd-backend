@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   index,
   integer,
@@ -577,4 +578,165 @@ export const announcements = pgTable('announcements', {
   buttons: jsonb('buttons').$type<AnnouncementButton[]>().notNull().default([]),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt()
+})
+
+// ---- messenger (chats of the web client, /api/v1/messenger)
+
+/** A text span of a chat message, in the client's format (offsets in UTF-16 code units) */
+export type ChatEntity = { type: string; offset?: number; length?: number; url?: string; post_id?: string }
+
+/** A direct chat: one per pair of users, its members in sorted order */
+export const chats = pgTable(
+  'chats',
+  {
+    id: id(),
+    type: smallint('type').notNull().default(0),
+    userLow: uuid('user_low')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userHigh: uuid('user_high')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // who opened it: an empty chat is listed for them only
+    createdBy: uuid('created_by').notNull(),
+    lastMessageId: uuid('last_message_id'),
+    lastMessageAt: ts('last_message_at'),
+    createdAt: createdAt()
+  },
+  (t) => [uniqueIndex('chats_pair_uq').on(t.userLow, t.userHigh)]
+)
+
+export const chatMembers = pgTable(
+  'chat_members',
+  {
+    chatId: uuid('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    isPinned: boolean('is_pinned').notNull().default(false),
+    isMuted: boolean('is_muted').notNull().default(false),
+    markedUnread: boolean('marked_unread').notNull().default(false),
+    lastReadId: uuid('last_read_id'),
+    lastReadAt: ts('last_read_at'),
+    // messages up to this one are gone for the member (cleared history, deleted chat)
+    clearedBeforeId: uuid('cleared_before_id'),
+    // the chat was deleted for the member; a new message brings it back
+    hiddenAt: ts('hidden_at'),
+    createdAt: createdAt()
+  },
+  (t) => [primaryKey({ columns: [t.chatId, t.userId] }), index('chat_members_user_idx').on(t.userId)]
+)
+
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    // UUIDv7: the client orders messages by id
+    id: id(),
+    chatId: uuid('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    senderId: uuid('sender_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // the client's idempotency key: a retried send returns the stored message
+    clientMessageId: uuid('client_message_id'),
+    text: text('text'),
+    entities: jsonb('entities').$type<ChatEntity[]>(),
+    attachmentIds: uuid('attachment_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    replyToId: uuid('reply_to_id'),
+    forwardedFromChat: uuid('forwarded_from_chat'),
+    forwardedFromMsg: uuid('forwarded_from_msg'),
+    forwardedFromSenderId: uuid('forwarded_from_sender_id'),
+    forwardedFromName: text('forwarded_from_name'),
+    reactionVersion: integer('reaction_version').notNull().default(0),
+    // a voice message was played by the recipient
+    heardAt: ts('heard_at'),
+    editedAt: ts('edited_at'),
+    deletedAt: ts('deleted_at'),
+    createdAt: createdAt()
+  },
+  (t) => [
+    index('chat_messages_chat_idx').on(t.chatId, t.id),
+    uniqueIndex('chat_messages_client_id_uq').on(t.senderId, t.clientMessageId)
+  ]
+)
+
+/** «Delete for me» */
+export const chatHiddenMessages = pgTable(
+  'chat_hidden_messages',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => chatMessages.id, { onDelete: 'cascade' })
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.messageId] })]
+)
+
+export const chatReactions = pgTable(
+  'chat_reactions',
+  {
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => chatMessages.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    emoji: text('emoji').notNull(),
+    createdAt: createdAt()
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.userId, t.emoji] })]
+)
+
+/** Files sent in chats: any type (documents too), stored with a safe extension */
+export const chatFiles = pgTable(
+  'chat_files',
+  {
+    id: id(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    storageKey: text('storage_key').notNull(),
+    url: text('url').notNull(),
+    // as declared by the client (it decides how to show the file); the stored type is sniffed
+    mime: text('mime').notNull(),
+    filename: text('filename'),
+    size: bigint('size', { mode: 'number' }).notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    durationMs: integer('duration_ms'),
+    waveform: text('waveform'),
+    thumbhash: text('thumbhash'),
+    thumbKey: text('thumb_key'),
+    thumbUrl: text('thumb_url'),
+    thumbWidth: integer('thumb_width'),
+    thumbHeight: integer('thumb_height'),
+    createdAt: createdAt()
+  },
+  (t) => [index('chat_files_owner_idx').on(t.ownerId)]
+)
+
+/** What happened in the user's chats, in order: /updates replays it, the WebSocket pushes it live */
+export const messengerEvents = pgTable(
+  'messenger_events',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt()
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.seq] }), index('messenger_events_created_idx').on(t.createdAt)]
+)
+
+export const messengerState = pgTable('messenger_state', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  lastSeq: bigint('last_seq', { mode: 'number' }).notNull().default(0)
 })
